@@ -19,3 +19,6 @@ background: "black"
 validate : True
 # out_dir: "output"
 # loss: "log1"
+
+
+#check test here is three mlp branck
