@@ -1,0 +1,6 @@
+data/
+dataset/
+out/
+output/
+out_check.png
+**/__pycache__/

@@ -1,0 +1,21 @@
+base_config:
+- configs/logging.yaml
+
+
+# ref_mesh  : "data/bob_1/bob_tri.obj"
+ref_mesh  : "data/bob/bob_tri.obj"
+# ref_textures: "data/bob_1/textures"
+random_textures: true
+iter: 2000
+save_interval: 100
+texture_res: [ 1024, 1024 ]
+train_res: [512, 512]
+batch: 4
+learning_rate: [0.03, 0.003]
+ks_min : [0, 0.001, 0]
+envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
+env_scale : 1
+background: "black"
+validate : True
+# out_dir: "output"
+# loss: "log1"
