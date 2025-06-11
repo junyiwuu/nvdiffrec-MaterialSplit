@@ -9,12 +9,15 @@
 
 import torch
 import pandas as pd
+import torch.nn as nn
+from torchvision import models
+import torch.nn.functional as F
 
 #----------------------------------------------------------------------------
 # HDR image losses
 #----------------------------------------------------------------------------
 
-def _tonemap_srgb(f):
+def _tonemap_srgb(f):  # gamma correction
     return torch.where(f > 0.0031308, torch.pow(torch.clamp(f, min=0.0031308), 1.0/2.4)*1.055 - 0.055, 12.92*f)
 
 # symmetric mean absolute percentage error
@@ -29,6 +32,30 @@ def _RELMSE(img, target, eps=0.1):
     denom = img * img + target * target + 0.1 
     return torch.mean(nom / denom)
 
+
+def _perceptualLoss(img, target, eps=0.0001):
+    vgg = models.vgg19(pretrained=True).features.eval().to(device='cuda') # features -> only need conv and pool , no need classification
+    for p in vgg.parameters():
+        p.requires_grad = False
+    
+    vgg_conv22 = nn.Sequential(*list(vgg.children())[:4]).to('cuda')
+    mean = torch.tensor([0.485, 0.485, 0.485], device=img.device)[:, None, None] # [3,1,1]
+    std  = torch.tensor([0.229, 0.224, 0.225], device=img.device)[:, None, None]
+
+    # nvdiffrec image shape is [n, h, w, c], so need permute
+    # 2d convolutions expects channels first tensorL [B, C , H , W]
+    pred_img = (img.permute(0, 3, 1, 2) - mean) / std
+    pred_target = (target.permute(0,3,1,2) - mean) / std
+
+    feat_img = vgg_conv22(pred_img)
+    feat_target = vgg_conv22(pred_target)
+
+    loss = F.mse_loss(feat_img, feat_target)
+
+    return loss
+
+
+
 # L1_loss : Mean Absolute Error L1 = mean(|A-B|)
 def image_loss_fn(img, target, loss, tonemapper):
     if tonemapper == 'log_srgb':
@@ -41,6 +68,8 @@ def image_loss_fn(img, target, loss, tonemapper):
         return _SMAPE(img, target)
     elif loss == 'relmse':
         return _RELMSE(img, target)
+    elif loss == 'perceptual':
+        return _perceptualLoss(img, target)
     else:
         return torch.nn.functional.l1_loss(img, target)
 

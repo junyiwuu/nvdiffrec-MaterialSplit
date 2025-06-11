@@ -65,7 +65,7 @@ class DLMesh(torch.nn.Module):
         # Image-space loss, split into a coverage component and a color component
         color_ref = target['img']
         img_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) 
-        img_loss += loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
+        img_loss += loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])  # apply mask
 
         reg_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
 

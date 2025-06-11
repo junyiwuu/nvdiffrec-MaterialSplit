@@ -108,7 +108,9 @@ def prepare_batch(target, bg_type='black'):
     target['background'] = background
 
     # add the background to image
-    target['img'] = torch.cat((torch.lerp(background, target['img'][..., 0:3], target['img'][..., 3:4]), target['img'][..., 3:4]), dim=-1)
+    target['img'] = torch.cat((
+        torch.lerp(background, target['img'][..., 0:3], target['img'][..., 3:4]),  # torch.lerp(starts, ends, weight)
+        target['img'][..., 3:4]), dim=-1)
 
     return target
 
@@ -137,8 +139,12 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
     new_mesh = mesh.Mesh(v_tex=uvs, t_tex_idx=faces, base=eval_mesh)
 
     # 将uv从mesh中反推出来，bake回来，uv就是刚生成的uv
-    mask, kd, ks, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_ks_normal'])
-    
+    if FLAGS.separate_rough:
+        mask, kd, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_normal'])
+        _, ks = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['ks'])
+    else:
+        mask, kd, ks, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_ks_normal'])
+        
     # 多层材质
     if FLAGS.layers > 1:
         kd = torch.cat((kd, torch.rand_like(kd[...,0:1])), dim=-1)
@@ -166,12 +172,27 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
     ks_min, ks_max = torch.tensor(FLAGS.ks_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.ks_max, dtype=torch.float32, device='cuda')
     nrm_min, nrm_max = torch.tensor(FLAGS.nrm_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.nrm_max, dtype=torch.float32, device='cuda')
 
-    # 要么使用MLP
+    # when bool mlp = True
     if mlp:
-        mlp_min = torch.cat((kd_min[0:3], ks_min, nrm_min), dim=0)
-        mlp_max = torch.cat((kd_max[0:3], ks_max, nrm_max), dim=0)
-        mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), channels=9, min_max=[mlp_min, mlp_max])
-        mat =  material.Material({'kd_ks_normal' : mlp_map_opt})
+        if FLAGS.separate_rough: # if FLAGS set separating the roughness
+            # cat kd min and norm min
+            mlp_min = torch.cat((kd_min[0:3], nrm_min), dim=0)
+            mlp_max = torch.cat((kd_max[0:3], nrm_max), dim=0)
+
+            mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), channels=6, min_max=[mlp_min, mlp_max])
+            mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), channels=3, min_max=[ks_min, ks_max])
+            
+            mat =  material.Material({
+                'kd_normal' : mlp_map_opt,
+                'ks' : mlp_ks_map_opt
+                })
+
+        else:
+
+            mlp_min = torch.cat((kd_min[0:3], ks_min, nrm_min), dim=0)
+            mlp_max = torch.cat((kd_max[0:3], ks_max, nrm_max), dim=0)
+            mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), channels=9, min_max=[mlp_min, mlp_max])
+            mat =  material.Material({'kd_ks_normal' : mlp_map_opt})
 
     # 要么使用普通贴图
     else:
@@ -653,6 +674,7 @@ if __name__ == "__main__":
     parser.add_argument('--validate', type=bool, default=True)
     parser.add_argument('--isosurface', default='dmtet', choices=['dmtet', 'flexicubes'])
     
+    
     FLAGS = parser.parse_args()
 
     FLAGS.mtl_override        = None                     # Override material of model
@@ -677,6 +699,8 @@ if __name__ == "__main__":
     FLAGS.cam_near_far        = [0.1, 1000.0]
     FLAGS.learn_light         = True
     FLAGS.add_datetime_prefix = False
+    # add for roughness MLP
+    FLAGS.separate_rough      = True
 
 
 
@@ -839,8 +863,17 @@ if __name__ == "__main__":
 
         # Free temporaries / cached memory 
         torch.cuda.empty_cache()
-        mat['kd_ks_normal'].cleanup()
-        del mat['kd_ks_normal']
+
+
+        if FLAGS.separate_rough:
+            mat['kd_normal'].cleanup()
+            del mat['kd_normal']
+            mat['ks'].cleanup()
+            del mat['ks']
+        else:
+            mat['kd_ks_normal'].cleanup()
+            del mat['kd_ks_normal']
+           
 
         lgt = lgt.clone()
         geometry = DLMesh(base_mesh, FLAGS)

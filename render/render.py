@@ -63,6 +63,21 @@ def shade(
         # Compute albedo (kd) gradient, used for material regularizer
         # 算带jitter和不带jitter的差值
         kd_grad    = torch.sum(torch.abs(all_tex_jitter[..., :-6] - all_tex[..., :-6]), dim=-1, keepdim=True) / 3
+
+    # separate ks as a mlp. still do kd grad
+    elif 'kd_normal' in material and "ks" in material: # when using separate rough mlp
+        kd_norm_tex_jitter = material['kd_normal'].sample(gb_pos + torch.normal(mean=0, std=0.01, size=gb_pos.shape, device="cuda"))
+        kd_norm_tex = material['kd_normal'].sample(gb_pos)
+
+        assert kd_norm_tex.shape[-1] == 6 or kd_norm_tex.shape[-1] == 7, "Combined kd_ks_normal must be 9 or 10 channels"
+
+        kd, perturbed_nrm = kd_norm_tex[..., :-3], kd_norm_tex[..., -3: ]
+        ks = material['ks'].sample(gb_pos)
+
+        kd_grad = torch.sum(torch.abs(kd_norm_tex_jitter[..., :-3] - kd_norm_tex[..., :-3]) , dim=-1, keepdim=True)/3
+
+
+
     else:
 
         # 如果不是MLP合成贴图，那就每个单个来采样
@@ -305,8 +320,17 @@ def render_uv(ctx, mesh, resolution, mlp_texture):
     gb_pos, _ = interpolate(mesh.v_pos[None, ...], rast, mesh.t_pos_idx.int())
 
     # Sample out textures from MLP
+    
     all_tex = mlp_texture.sample(gb_pos)
-    assert all_tex.shape[-1] == 9 or all_tex.shape[-1] == 10, "Combined kd_ks_normal must be 9 or 10 channels"
+    # assert all_tex.shape[-1] == 9 or all_tex.shape[-1] == 10, "Combined kd_ks_normal must be 9 or 10 channels"
     perturbed_nrm = all_tex[..., -3:]
     # util.norm: 把perturbed normal normalized化，避免数值不规范导致shading的问题
-    return (rast[..., -1:] > 0).float(), all_tex[..., :-6], all_tex[..., -6:-3], util.safe_normalize(perturbed_nrm)
+
+    if all_tex.shape[-1] == 9 or all_tex.shape[-1] == 10:
+        return (rast[..., -1:] > 0).float(), all_tex[..., :-6], all_tex[..., -6:-3], util.safe_normalize(perturbed_nrm)        
+    if all_tex.shape[-1] == 6 or all_tex.shape[-1] == 7:
+        return (rast[..., -1:] > 0).float(), all_tex[..., :-3], util.safe_normalize(perturbed_nrm)
+    if all_tex.shape[-1] == 3:
+        return (rast[..., -1:] > 0).float(), all_tex
+
+
