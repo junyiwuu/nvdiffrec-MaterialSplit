@@ -391,11 +391,22 @@ class Trainer(torch.nn.Module):
                 self.light.build_mips()
         # 所有可训练参数给到这里
         # ---------------collect parameters
-        if not FLAGS.separate_rough:
-            self.params = list(self.material.parameters())
-        if FLAGS.separate_rough:
+        # if not FLAGS.separate_rough:
+        #     self.params = list(self.material.parameters())
+        # if FLAGS.separate_rough:
+        #     self.params = list(self.material['kd_normal'].parameters())
+        #     self.ks_params = list(self.material['ks'].parameters()) # separate ks network
+
+        if hasattr(self.material, "kd_normal"):
             self.params = list(self.material['kd_normal'].parameters())
-            self.ks_params = list(self.material['ks'].parameters()) # separate ks network
+            self.ks_params = list(self.material['ks'].parameters())
+        elif hasattr(self.material, "kd_ks_normal"):
+            self.params = list(self.material["kd_ks_normal"].parameters())
+        elif hasattr(self.material, "ks") and hasattr(self.material, "kd") and hasattr(self.material, "normal"): # or just use the textures. all above are MLP
+            logging.debug(f"loading textures kd, ks , normal")
+            self.params = list(self.material['kd'].parameters())
+            self.params += list(self.material['normal'].parameters())
+            self.ks_params = list(self.material['ks'].parameters())
 
         self.params += list(self.light.parameters()) if optimize_light else []
         self.geo_params = list(self.geometry.parameters()) if optimize_geometry else []
@@ -505,7 +516,20 @@ def optimize_mesh(
 
     if FLAGS.separate_rough:
         optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
-        scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: lr_schedule(x, 0.9))
+
+        warmup_ks_iter = int(0.1*FLAGS.iter)
+        hold_ks_iters = int(0.5*FLAGS.iter)
+        decay_ks_rate = 0.0002
+
+        def ks_lr_lambda(it):
+            if it < warmup_ks_iter:
+                return 0.01 + 0.99  * (it/warmup_ks_iter)
+            elif it < warmup_ks_iter + hold_ks_iters:
+                return 1.0
+            else:
+                return max(0.0, 10**(-(FLAGS.iter - warmup_ks_iter - hold_ks_iters)*decay_ks_rate))
+            
+        scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: ks_lr_lambda(x))
 
     # 两个用不同的优化器
     optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
@@ -659,6 +683,14 @@ def optimize_mesh(
             scheduler.get_last_lr()[0],
             global_step=it        
         )
+
+        # ks learning rate
+        tb_logger.writer.add_scalar(
+            f"{pass_name}/ks_lr",
+            scheduler_ks.get_last_lr()[0],
+            global_step=it        
+        )
+
 
             # logging.info(f"currently is iter : {it}")
 

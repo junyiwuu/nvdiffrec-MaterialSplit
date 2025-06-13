@@ -233,12 +233,13 @@ class DMTetGeometry(torch.nn.Module):
         if self.FLAGS.separate_rough: 
             # create loss for ks optimization
             ks_loss_fn = loss_dict['ks_loss_fn']
-            ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
-                                color_ref[... , 0:3] * color_ref[... , 3:])  
+            # ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+            #                     color_ref[... , 0:3] * color_ref[... , 3:])
+            ks_loss = img_loss
         
-            if iteration % 20==0:
-                logging.info(f"perceptual loss: {ks_loss}")
-                logging.info(f"img_loss: {torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])}" )
+            # if iteration % 20==0:
+            #     logging.info(f"perceptual loss: {ks_loss}")
+            #     logging.info(f"img_loss: {torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])}" )
 
 
         # SDF regularizer

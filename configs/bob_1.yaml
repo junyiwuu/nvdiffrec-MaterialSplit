@@ -8,7 +8,7 @@ base_config:
 ref_mesh  : "data/bob_1/bob_tri.obj"
 ref_textures: "data/bob_1/textures"
 random_textures: true
-iter: 100
+iter: 1000
 save_interval: 100
 texture_res: [ 1024, 1024 ]
 train_res: [512, 512]

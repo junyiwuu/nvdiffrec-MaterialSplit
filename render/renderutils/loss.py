@@ -17,6 +17,15 @@ import torch.nn.functional as F
 # HDR image losses
 #----------------------------------------------------------------------------
 
+
+_vgg_conv1_2 = models.vgg19(pretrained=True).features[:4].eval().to(device='cuda').eval()
+for p in _vgg_conv1_2.parameters():
+        p.requires_grad = False
+
+_mean = torch.tensor([0.485, 0.456, 0.406], device='cuda')[:, None, None] # [3,1,1]
+_std  = torch.tensor([0.229, 0.224, 0.225], device='cuda')[:, None, None]
+
+
 def _tonemap_srgb(f):  # gamma correction
     return torch.where(f > 0.0031308, torch.pow(torch.clamp(f, min=0.0031308), 1.0/2.4)*1.055 - 0.055, 12.92*f)
 
@@ -34,21 +43,15 @@ def _RELMSE(img, target, eps=0.1):
 
 
 def _perceptualLoss(img, target, eps=0.0001):
-    vgg = models.vgg19(pretrained=True).features.eval().to(device='cuda') # features -> only need conv and pool , no need classification
-    for p in vgg.parameters():
-        p.requires_grad = False
-    
-    vgg_conv22 = nn.Sequential(*list(vgg.children())[:4]).to('cuda')
-    mean = torch.tensor([0.485, 0.485, 0.485], device=img.device)[:, None, None] # [3,1,1]
-    std  = torch.tensor([0.229, 0.224, 0.225], device=img.device)[:, None, None]
+
 
     # nvdiffrec image shape is [n, h, w, c], so need permute
     # 2d convolutions expects channels first tensorL [B, C , H , W]
-    pred_img = (img.permute(0, 3, 1, 2) - mean) / std
-    pred_target = (target.permute(0,3,1,2) - mean) / std
+    pred_img = (img.permute(0, 3, 1, 2) - _mean) / _std
+    pred_target = (target.permute(0,3,1,2) - _mean) / _std
 
-    feat_img = vgg_conv22(pred_img)
-    feat_target = vgg_conv22(pred_target)
+    feat_img = _vgg_conv1_2(pred_img)
+    feat_target = _vgg_conv1_2(pred_target)
 
     loss = F.mse_loss(feat_img, feat_target)
 
