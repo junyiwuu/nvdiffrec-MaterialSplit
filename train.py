@@ -391,9 +391,15 @@ class Trainer(torch.nn.Module):
                 self.light.build_mips()
         # 所有可训练参数给到这里
         # ---------------collect parameters
-        self.params = list(self.material.parameters())
+        if not FLAGS.separate_rough:
+            self.params = list(self.material.parameters())
+        if FLAGS.separate_rough:
+            self.params = list(self.material['kd_normal'].parameters())
+            self.ks_params = list(self.material['ks'].parameters()) # separate ks network
+
         self.params += list(self.light.parameters()) if optimize_light else []
         self.geo_params = list(self.geometry.parameters()) if optimize_geometry else []
+
 
     def forward(self, target, it):
         if self.optimize_light:
@@ -492,9 +498,14 @@ def optimize_mesh(
     # -------------------- single GPU situation ---------------------------
     # else:
     trainer = trainer_noddp
+
     if optimize_geometry:
         optimizer_mesh = torch.optim.Adam(trainer_noddp.geo_params, lr=learning_rate_pos, betas=betas)
         scheduler_mesh = torch.optim.lr_scheduler.LambdaLR(optimizer_mesh, lr_lambda=lambda x: lr_schedule(x, 0.9)) 
+
+    if FLAGS.separate_rough:
+        optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
+        scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: lr_schedule(x, 0.9))
 
     # 两个用不同的优化器
     optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
@@ -562,6 +573,8 @@ def optimize_mesh(
         optimizer.zero_grad()
         if optimize_geometry:
             optimizer_mesh.zero_grad()
+        if FLAGS.separate_rough:
+            optimizer_ks.zero_grad()
 
         # ==============================================================================================
         #  Training
@@ -590,7 +603,11 @@ def optimize_mesh(
         # ==============================================================================================
         #  Backpropagate
         # ==============================================================================================
-        total_loss.backward()  # calculate gradient
+        total_loss.backward(retain_graph=True)  # calculate gradient
+        # activate the ks loss
+        ks_loss.backward()
+
+
         if hasattr(lgt, 'base') and lgt.base.grad is not None and optimize_light:
             lgt.base.grad *= 64 #lgt.base.grad是刚刚backward出来的提督，乘以64为了让光照更新更快，将其放大
         if 'kd_ks_normal' in opt_material:
@@ -602,9 +619,9 @@ def optimize_mesh(
         if optimize_geometry:
             optimizer_mesh.step()
             scheduler_mesh.step()
-        # if FLAGS.separate_rough:
-        #     optimizer_ks.step()
-        #     scheduler_ks.step()
+        if FLAGS.separate_rough:
+            optimizer_ks.step()
+            scheduler_ks.step()
 
         # ==============================================================================================
         #  Clamp trainables to reasonable range 保证参数合理
