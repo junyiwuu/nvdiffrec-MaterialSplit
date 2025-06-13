@@ -2,11 +2,13 @@ base_config:
 - configs/logging.yaml
 
 
-# ref_mesh  : "data/bob_1/bob_tri.obj"
-ref_mesh  : "data/bob/bob_tri.obj"
-# ref_textures: "data/bob_1/textures"
+
+# ref_mesh  : "data/bob/bob_tri.obj"
+
+ref_mesh  : "data/bob_1/bob_tri.obj"
+ref_textures: "data/bob_1/textures"
 random_textures: true
-iter: 1000
+iter: 100
 save_interval: 100
 texture_res: [ 1024, 1024 ]
 train_res: [512, 512]

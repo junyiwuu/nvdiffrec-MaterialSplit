@@ -67,17 +67,19 @@ RADIUS = 3.0
 ###############################################################################
 # 份额变化一flag决定用哪种mse
 @torch.no_grad()
-def createLoss(FLAGS):
-    if FLAGS.loss == "smape":
+def createLoss(loss_type ):
+    if loss_type == "smape":
         return lambda img, ref: ru.image_loss(img, ref, loss='smape', tonemapper='none')
-    elif FLAGS.loss == "mse":
+    elif loss_type == "mse":
         return lambda img, ref: ru.image_loss(img, ref, loss='mse', tonemapper='none')
-    elif FLAGS.loss == "logl1":
+    elif loss_type == "logl1":
         return lambda img, ref: ru.image_loss(img, ref, loss='l1', tonemapper='log_srgb')
-    elif FLAGS.loss == "logl2":
+    elif loss_type == "logl2":
         return lambda img, ref: ru.image_loss(img, ref, loss='mse', tonemapper='log_srgb')
-    elif FLAGS.loss == "relmse":
+    elif loss_type == "relmse":
         return lambda img, ref: ru.image_loss(img, ref, loss='relmse', tonemapper='none')
+    elif loss_type == "perceptual":
+        return lambda img, ref: ru.image_loss(img, ref, loss='perceptual', tonemapper='log_srgb')
     else:
         assert False
 
@@ -372,7 +374,7 @@ def validate(glctx, geometry, opt_material, lgt, dataset_validate, out_dir, FLAG
 ###############################################################################
 
 class Trainer(torch.nn.Module):
-    def __init__(self, glctx, geometry, lgt, mat, optimize_geometry, optimize_light, image_loss_fn, FLAGS):
+    def __init__(self, glctx, geometry, lgt, mat, optimize_geometry, optimize_light, loss_dict: dict, FLAGS):
         super(Trainer, self).__init__()
 
         self.glctx = glctx
@@ -381,7 +383,7 @@ class Trainer(torch.nn.Module):
         self.material = mat
         self.optimize_geometry = optimize_geometry
         self.optimize_light = optimize_light
-        self.image_loss_fn = image_loss_fn
+        self.loss_dict = loss_dict
         self.FLAGS = FLAGS
 
         if not self.optimize_light:
@@ -403,8 +405,8 @@ class Trainer(torch.nn.Module):
             if self.FLAGS.camera_space_light:
                 self.light.xfm(target['mv'])
         
-        return self.geometry.tick(glctx, target, self.light, self.material, self.image_loss_fn, it)
-            #返回的是img_loss, reg_loss
+        return self.geometry.tick(glctx, target, self.light, self.material, self.loss_dict, it)
+            #返回的是img_loss, reg_loss, or maybe ks_loss
 
 
 
@@ -422,11 +424,15 @@ def optimize_mesh(
     pass_idx=0,
     pass_name="",
     optimize_light=True,
-    optimize_geometry=True
+    optimize_geometry=True,
     ):
 
     # ------- initialize ---------------
-    train_metrics = MetricTracker(*["img_loss", "reg_loss", "iter_time"])
+    if FLAGS.separate_rough:
+        train_metrics = MetricTracker(*["img_loss", "reg_loss", "iter_time", "ks_loss"])
+    else:
+        train_metrics = MetricTracker(*["img_loss", "reg_loss", "iter_time"])
+
     start_time = time.time()
 
 
@@ -451,9 +457,16 @@ def optimize_mesh(
     # ==============================================================================================
     #  Image loss
     # ==============================================================================================
-    image_loss_fn = createLoss(FLAGS)
+    loss_dict = {}
+    if FLAGS.ref_textures:
+        loss_dict["ks_loss_fn"] = createLoss(FLAGS.ks_loss)
+        loss_dict['image_loss_fn'] = createLoss(FLAGS.loss)
+        logging.debug(f"choose {FLAGS.ks_loss} as loss for ks, choose {FLAGS.loss} as loss for other parts")
+    else: 
+        loss_dict['image_loss_fn'] = createLoss(FLAGS.loss)
+        logging.debug(f"choose {FLAGS.loss} as loss for all")
 
-    trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, image_loss_fn, FLAGS)
+    trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, loss_dict, FLAGS)
 
 
     if FLAGS.isosurface == 'flexicubes':
@@ -554,7 +567,11 @@ def optimize_mesh(
         #  Training
         # ==============================================================================================
         # 相当于geometry.tick，得到loss
-        img_loss, reg_loss = trainer(target, it)
+        if not FLAGS.separate_rough:
+            img_loss, reg_loss = trainer(target, it)
+        else:
+            img_loss, reg_loss, ks_loss = trainer(target, it)
+        
 
         # ==============================================================================================
         #  Final loss
@@ -565,8 +582,10 @@ def optimize_mesh(
         # reg_loss_vec.append(reg_loss.item())
 
         train_metrics.update("img_loss", img_loss.item())
-        train_metrics.update("reg_loss", reg_loss.item())
+        train_metrics.update("reg_loss", reg_loss.item()) 
         train_metrics.update("iter_time", time.time() - start_time)
+        if FLAGS.separate_rough:
+            train_metrics.update("ks_loss" , ks_loss.item())
 
         # ==============================================================================================
         #  Backpropagate
@@ -583,6 +602,9 @@ def optimize_mesh(
         if optimize_geometry:
             optimizer_mesh.step()
             scheduler_mesh.step()
+        # if FLAGS.separate_rough:
+        #     optimizer_ks.step()
+        #     scheduler_ks.step()
 
         # ==============================================================================================
         #  Clamp trainables to reasonable range 保证参数合理
@@ -605,21 +627,21 @@ def optimize_mesh(
         #  Logging
         # ==============================================================================================
 
-        if it % 10 == 0:
+        # if it % 10 == 0:
 
-            tb_logger.log_dic(
-                {
-                    f"train/{k}": v
-                    for k, v in train_metrics.result().items()
-                },
-                global_step=it,
-            )
+        tb_logger.log_dic(
+            {
+                f"{pass_name}/train/{k}": v
+                for k, v in train_metrics.result().items()
+            },
+            global_step=it,
+        )
 
-            tb_logger.writer.add_scalar(
-                "lr",
-                scheduler.get_last_lr()[0],
-                global_step=it        
-            )
+        tb_logger.writer.add_scalar(
+            f"{pass_name}/lr",
+            scheduler.get_last_lr()[0],
+            global_step=it        
+        )
 
             # logging.info(f"currently is iter : {it}")
 
@@ -701,7 +723,7 @@ if __name__ == "__main__":
     FLAGS.add_datetime_prefix = False
     # add for roughness MLP
     FLAGS.separate_rough      = True
-
+    FLAGS.ks_loss             = "perceptual"
 
 
 

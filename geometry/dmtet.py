@@ -9,6 +9,7 @@
 
 import numpy as np
 import torch
+import logging
 
 from render import mesh
 from render import render
@@ -211,7 +212,7 @@ class DMTetGeometry(torch.nn.Module):
                                         msaa=True, background=target['background'], bsdf=bsdf)
 
 
-    def tick(self, glctx, target, lgt, opt_material, loss_fn, iteration):
+    def tick(self, glctx, target, lgt, opt_material, loss_dict, iteration):
 
         # ==============================================================================================
         #  Render optimizable object with identical conditions
@@ -226,7 +227,19 @@ class DMTetGeometry(torch.nn.Module):
         # Image-space loss, split into a coverage component and a color component
         color_ref = target['img']
         img_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) 
+        loss_fn = loss_dict['image_loss_fn']
         img_loss = img_loss + loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
+
+        if self.FLAGS.separate_rough: 
+            # create loss for ks optimization
+            ks_loss_fn = loss_dict['ks_loss_fn']
+            ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+                                color_ref[... , 0:3] * color_ref[... , 3:])  
+        
+            if iteration % 20==0:
+                logging.info(f"perceptual loss: {ks_loss}")
+                logging.info(f"img_loss: {torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])}" )
+
 
         # SDF regularizer
         sdf_weight = self.FLAGS.sdf_regularizer - (self.FLAGS.sdf_regularizer - 0.01)*min(1.0, 4.0 * t_iter)
@@ -241,5 +254,8 @@ class DMTetGeometry(torch.nn.Module):
         # Light white balance regularizer
         reg_loss = reg_loss + lgt.regularizer() * 0.005
 
-        return img_loss, reg_loss
+        if self.FLAGS.separate_rough: 
+            return img_loss, reg_loss, ks_loss
+        else:
+            return img_loss, reg_loss
 

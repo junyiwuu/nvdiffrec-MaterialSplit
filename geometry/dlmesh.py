@@ -8,6 +8,7 @@
 # its affiliates is strictly prohibited.
 
 import torch
+import logging
 
 from render import mesh
 from render import render
@@ -50,7 +51,7 @@ class DLMesh(torch.nn.Module):
         return render.render_mesh(glctx, opt_mesh, target['mvp'], target['campos'], lgt, target['resolution'], spp=target['spp'], 
                                     num_layers=self.FLAGS.layers, msaa=True, background=target['background'], bsdf=bsdf)
 
-    def tick(self, glctx, target, lgt, opt_material, loss_fn, iteration):
+    def tick(self, glctx, target, lgt, opt_material, loss_dict, iteration):
         
         # ==============================================================================================
         #  Render optimizable object with identical conditions
@@ -64,8 +65,23 @@ class DLMesh(torch.nn.Module):
 
         # Image-space loss, split into a coverage component and a color component
         color_ref = target['img']
+
         img_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) 
+        loss_fn = loss_dict['image_loss_fn']
         img_loss += loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])  # apply mask
+        # img loss  is typical calculate the final render with target
+
+        if self.FLAGS.separate_rough: 
+            # create loss for ks optimization
+            ks_loss_fn = loss_dict['ks_loss_fn']
+            ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+                                color_ref[... , 0:3] * color_ref[... , 3:])  
+        
+            if iteration % 20==0:
+                logging.info(f"perceptual loss: {ks_loss}")
+                logging.info(f"img_loss: {torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])}" )
+
+
 
         reg_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
 
@@ -85,4 +101,7 @@ class DLMesh(torch.nn.Module):
         # Light white balance regularizer
         reg_loss = reg_loss + lgt.regularizer() * 0.005
 
-        return img_loss, reg_loss
+        if self.FLAGS.separate_rough: 
+            return img_loss, reg_loss, ks_loss
+        else:
+            return img_loss, reg_loss

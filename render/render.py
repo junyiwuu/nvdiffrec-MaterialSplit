@@ -42,7 +42,7 @@ def shade(
         material,
         bsdf
     ):
-    logging.debug("start shade")
+    # logging.debug("start shade")
 
     perturbed_nrm = None
     # kd_ks_normal是合成材质
@@ -164,7 +164,7 @@ def render_layer(
         msaa,
         bsdf
     ):
-    logging.debug("start render layer")
+    # logging.debug("start render layer")
     full_res = [resolution[0]*spp, resolution[1]*spp]
 
     ################################################################################
@@ -245,7 +245,7 @@ def render_mesh(
         background  = None, 
         bsdf        = None
     ):
-    logging.debug("start render mesh")
+    # logging.debug("start render mesh")
     # 处理shape
     def prepare_input_vector(x):
         x = torch.tensor(x, dtype=torch.float32, device='cuda') if not torch.is_tensor(x) else x
