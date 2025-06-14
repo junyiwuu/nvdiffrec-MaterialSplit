@@ -77,7 +77,7 @@ class DLMesh(torch.nn.Module):
             # ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
             #                     color_ref[... , 0:3] * color_ref[... , 3:]) 
             ks_loss = img_loss
-            
+
             # if iteration % 20==0:
             #     logging.info(f"perceptual loss: {ks_loss}")
             #     logging.info(f"img_loss: {torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])}" )
