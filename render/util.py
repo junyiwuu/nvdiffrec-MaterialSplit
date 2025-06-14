@@ -465,3 +465,7 @@ def checkerboard(res, checker_size) -> np.ndarray:
     check = check[:res[0], :res[1]]
     return np.stack((check, check, check), axis=-1)
 
+
+
+# ------------------------------------------------------
+# def save_

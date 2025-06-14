@@ -473,7 +473,16 @@ def optimize_mesh(
             return iter / warmup_iter 
         return max(0.0, 10**(-(iter - warmup_iter)*0.0002)) # Exponential falloff from [1.0, 0.1] over 5k epochs.    
 
- 
+    _decay_ks_rate = 0.0002
+    def ks_lr_lambda(it):
+        if it < warmup_ks_iter:
+            return 0.01 + 0.99  * (it/warmup_ks_iter)
+        elif it < warmup_ks_iter + hold_ks_iters:
+            return 1.0
+        else:
+            frac = (it - warmup_ks_iter - hold_ks_iters) / (FLAGS.iter - warmup_ks_iter - hold_ks_iters)
+            return max(FLAGS.learning_rate[1], 1.0 - frac)
+        
     # ==============================================================================================
     #   loss
     # ==============================================================================================
@@ -485,6 +494,8 @@ def optimize_mesh(
     else: 
         loss_dict['image_loss_fn'] = createLoss(FLAGS.loss)
         logging.debug(f"choose {FLAGS.loss} as loss for all")
+
+
 
     trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, loss_dict, FLAGS)
 
@@ -503,19 +514,9 @@ def optimize_mesh(
 
     if FLAGS.separate_rough:
         optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
-
         warmup_ks_iter = int(0.1*FLAGS.iter)
-        hold_ks_iters = int(0.5*FLAGS.iter)
-        decay_ks_rate = 0.0002
-
-        def ks_lr_lambda(it):
-            if it < warmup_ks_iter:
-                return 0.01 + 0.99  * (it/warmup_ks_iter)
-            elif it < warmup_ks_iter + hold_ks_iters:
-                return 1.0
-            else:
-                return max(0.0, 10**(-(FLAGS.iter - warmup_ks_iter - hold_ks_iters)*decay_ks_rate))
-            
+        hold_ks_iters = int(0.3*FLAGS.iter)
+        
         scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: ks_lr_lambda(x))
 
 
@@ -626,9 +627,6 @@ def optimize_mesh(
             total_norm = total_norm**0.05
 
             tb_logger.writer.add_scalar("ks/grad_norm", total_norm, global_step=it)
-
-
-
 
 
 
