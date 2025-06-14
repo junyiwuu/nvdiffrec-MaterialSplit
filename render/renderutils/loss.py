@@ -59,7 +59,7 @@ def _perceptualLoss(img, target, eps=0.0001):
 def _msssim(img, target, eps=0.0001):
     pred_img = img.permute(0, 3, 1, 2) 
     pred_target = target.permute(0,3,1,2) 
-    return ms_ssim(pred_img, pred_target)
+    return (1-ms_ssim(pred_img, pred_target))
 
 
 

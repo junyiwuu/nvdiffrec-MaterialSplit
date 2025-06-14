@@ -460,13 +460,10 @@ def optimize_mesh(
     #  learing rate
     # ==============================================================================================
 
-    # set the learning rate for pos and mat. 
-    # learning rate is tuple, first one for pos, second one for mat
+    # set the learning rate for pos and mat. if only one list, same for both , two list be different
     learning_rate = FLAGS.learning_rate[pass_idx] if isinstance(FLAGS.learning_rate, list) or isinstance(FLAGS.learning_rate, tuple) else FLAGS.learning_rate
     learning_rate_pos = learning_rate[0] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
     learning_rate_mat = learning_rate[1] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
-
-
 
     def lr_schedule(iter, fraction):
         if iter < warmup_iter:
@@ -481,7 +478,7 @@ def optimize_mesh(
             return 1.0
         else:
             frac = (it - warmup_ks_iter - hold_ks_iters) / (FLAGS.iter - warmup_ks_iter - hold_ks_iters)
-            return max(FLAGS.learning_rate[1], 1.0 - frac)
+            return max(0.1, 1.0 - frac)
         
     # ==============================================================================================
     #   loss

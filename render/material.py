@@ -116,6 +116,7 @@ def load_textures( textures_path):
         fullpath = os.path.join(textures_path, filename)
         if "albedo" in lowername or "basecolor" in lowername:
             mat['kd'] = texture.load_texture2D(fullpath, channels=3)
+            mat['kd'] = texture.srgb_to_rgb(mat['kd'])  # use linear data to render, write out with srgb
 
     
         if "roughness" in lowername:
@@ -146,9 +147,6 @@ def load_textures( textures_path):
 
     combined = torch.cat([occlusion, rough, metal], dim=-1)
     mat['ks'] = texture.Texture2D(combined)
-
-    
-
 
     if 'bsdf' not in mat:
         mat['bsdf'] = 'pbr'

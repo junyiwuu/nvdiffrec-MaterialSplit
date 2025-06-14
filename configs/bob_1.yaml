@@ -19,7 +19,7 @@ envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 env_scale : 1
 background: "black"
 validate : True
-# out_dir: "output"
+out_dir: "output/output_addMSSSIM"
 loss: "relmse"
 
 
