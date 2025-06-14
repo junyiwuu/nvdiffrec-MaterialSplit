@@ -12,6 +12,7 @@ import pandas as pd
 import torch.nn as nn
 from torchvision import models
 import torch.nn.functional as F
+from pytorch_msssim import ms_ssim
 
 #----------------------------------------------------------------------------
 # HDR image losses
@@ -43,8 +44,6 @@ def _RELMSE(img, target, eps=0.1):
 
 
 def _perceptualLoss(img, target, eps=0.0001):
-
-
     # nvdiffrec image shape is [n, h, w, c], so need permute
     # 2d convolutions expects channels first tensorL [B, C , H , W]
     pred_img = (img.permute(0, 3, 1, 2) - _mean) / _std
@@ -56,6 +55,11 @@ def _perceptualLoss(img, target, eps=0.0001):
     loss = F.mse_loss(feat_img, feat_target)
 
     return loss
+
+def _msssim(img, target, eps=0.0001):
+    pred_img = img.permute(0, 3, 1, 2) 
+    pred_target = target.permute(0,3,1,2) 
+    return ms_ssim(pred_img, pred_target)
 
 
 
@@ -73,6 +77,8 @@ def image_loss_fn(img, target, loss, tonemapper):
         return _RELMSE(img, target)
     elif loss == 'perceptual':
         return _perceptualLoss(img, target)
+    elif loss == "msssim":
+        return _msssim(img, target)
     else:
         return torch.nn.functional.l1_loss(img, target)
 

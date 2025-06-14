@@ -236,6 +236,9 @@ class DMTetGeometry(torch.nn.Module):
             # ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
             #                     color_ref[... , 0:3] * color_ref[... , 3:])
             ks_loss = img_loss
+            
+            # ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+            #                     color_ref[... , 0:3] * color_ref[... , 3:])
         
             # if iteration % 20==0:
             #     logging.info(f"perceptual loss: {ks_loss}")

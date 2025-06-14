@@ -80,6 +80,9 @@ def createLoss(loss_type ):
         return lambda img, ref: ru.image_loss(img, ref, loss='relmse', tonemapper='none')
     elif loss_type == "perceptual":
         return lambda img, ref: ru.image_loss(img, ref, loss='perceptual', tonemapper='log_srgb')
+    elif loss_type == "msssim":
+        return lambda img, ref: ru.image_loss(img, ref, loss='msssim', tonemapper="log_srgb")
+    
     else:
         assert False
 
@@ -454,7 +457,7 @@ def optimize_mesh(
 
 
     # ==============================================================================================
-    #  Setup torch optimizer
+    #  learing rate
     # ==============================================================================================
 
     # set the learning rate for pos and mat. 
@@ -472,7 +475,7 @@ def optimize_mesh(
 
  
     # ==============================================================================================
-    #  Image loss
+    #   loss
     # ==============================================================================================
     loss_dict = {}
     if FLAGS.ref_textures:
@@ -485,29 +488,13 @@ def optimize_mesh(
 
     trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, loss_dict, FLAGS)
 
-
+    # for isosurface
     if FLAGS.isosurface == 'flexicubes':
         betas = (0.7, 0.9)
     else:
         betas = (0.9, 0.999)
 
-    # # ----------------- multi GPU situation --------------------
-    # if FLAGS.multi_gpu: 
-    #     # Multi GPU training mode
-    #     import apex
-    #     from apex.parallel import DistributedDataParallel as DDP
 
-    #     trainer = DDP(trainer_noddp)
-    #     trainer.train()
-    #     if optimize_geometry:
-    #         optimizer_mesh = apex.optimizers.FusedAdam(trainer_noddp.geo_params, lr=learning_rate_pos, betas=betas)
-    #         scheduler_mesh = torch.optim.lr_scheduler.LambdaLR(optimizer_mesh, lr_lambda=lambda x: lr_schedule(x, 0.9)) 
-
-    #     optimizer = apex.optimizers.FusedAdam(trainer_noddp.params, lr=learning_rate_mat)
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_schedule(x, 0.9)) 
-
-    # -------------------- single GPU situation ---------------------------
-    # else:
     trainer = trainer_noddp
 
     if optimize_geometry:
@@ -531,9 +518,8 @@ def optimize_mesh(
             
         scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: ks_lr_lambda(x))
 
-    # 两个用不同的优化器
+
     optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
-    # initialize the scheduler
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_schedule(x, 0.9)) 
 
     
@@ -566,7 +552,6 @@ def optimize_mesh(
     for it, target in enumerate(dataloader_train):
 
         # Mix randomized background into dataset image
-        # 用随机背景
         target = prepare_batch(target, 'random')
 
         # ==============================================================================================
@@ -615,9 +600,6 @@ def optimize_mesh(
         # ==============================================================================================
         total_loss = img_loss + reg_loss
 
-        # img_loss_vec.append(img_loss.item())
-        # reg_loss_vec.append(reg_loss.item())
-
         train_metrics.update("img_loss", img_loss.item())
         train_metrics.update("reg_loss", reg_loss.item()) 
         train_metrics.update("iter_time", time.time() - start_time)
@@ -630,6 +612,24 @@ def optimize_mesh(
         total_loss.backward(retain_graph=True)  # calculate gradient
         # activate the ks loss
         ks_loss.backward()
+
+        # ------------ print gradient - debug --------------
+        if FLAGS.separate_rough:
+            total_norm = 0.0
+            for name, p in trainer.material['ks'].named_parameters():
+                # tb_logger.writer.add_histogram(f"ks/{name}grad", p.grad.cpu().detach().numpy(), global_step=it)
+                if p.grad is None:
+                    logging.debug(f"[DEBIG Ks] {name} grad is None")
+                else:
+                    total_norm += p.grad.norm().item()**2
+                    logging.debug(f"[DEBUG Ks] {name} grad norm = {p.grad.norm():.3e}")
+            total_norm = total_norm**0.05
+
+            tb_logger.writer.add_scalar("ks/grad_norm", total_norm, global_step=it)
+
+
+
+
 
 
         if hasattr(lgt, 'base') and lgt.base.grad is not None and optimize_light:
@@ -711,6 +711,11 @@ def optimize_mesh(
 
     return geometry, opt_material
 
+
+
+##########################################################################################################################################
+
+
 #----------------------------------------------------------------------------
 # Main function.
 #----------------------------------------------------------------------------
@@ -772,7 +777,7 @@ if __name__ == "__main__":
     FLAGS.add_datetime_prefix = False
     # add for roughness MLP
     FLAGS.separate_rough      = True
-    FLAGS.ks_loss             = "perceptual"
+    FLAGS.ks_loss             = "msssim"
 
 
 
@@ -790,7 +795,9 @@ if __name__ == "__main__":
         torch.cuda.set_device(FLAGS.local_rank)
         torch.distributed.init_process_group(backend="nccl", init_method="env://")
 
+    # ==============================================================================================
     # -------------------use config / logging------------------------------------
+    # ==============================================================================================
     # if FLAGS.config is not None:
     #     data = json.load(open(FLAGS.config, 'r'))
     #     for key in data:
@@ -844,12 +851,6 @@ if __name__ == "__main__":
     else:
         FLAGS.out_dir = 'out/' + FLAGS.out_dir
 
-    # if FLAGS.local_rank == 0:
-    #     print("Config / Flags:")
-    #     print("---------")
-    #     for key in FLAGS.__dict__.keys():
-    #         print(key, FLAGS.__dict__[key])
-    #     print("---------")
 
     os.makedirs(FLAGS.out_dir, exist_ok=True)
 
@@ -887,12 +888,13 @@ if __name__ == "__main__":
     else:
         lgt = light.load_env(FLAGS.envmap, scale=FLAGS.env_scale)
 
+    # ==============================================================================================
+    # training 
+    # ==============================================================================================
+    ############### no base mesh provided flow #########################
     if FLAGS.base_mesh is None:
-        # ==============================================================================================
         #  If no initial guess, use DMtets to create geometry
-        # ==============================================================================================
         logging.info("No initial mesh provided, use DMTets to create geometry")
-        # Setup geometry for optimization
 
         if FLAGS.isosurface == 'flexicubes':
             logging.info("flexicubes selected")
@@ -903,15 +905,15 @@ if __name__ == "__main__":
         else: 
             assert False, "Invalid isosurfacing %s" % FLAGS.isosurface
 
-        # Setup textures, make initial guess from reference if possible
+        
+        # --- initial material , make initial guess ---
+        
         mat = initial_guess_material(geometry, True, FLAGS)
 
-        # Run optimization
+        # ----------------------------- pass 1 : Run optimization--------------------------
         logging.info("pass 1 started ")
         geometry, mat = optimize_mesh(glctx, geometry, mat, lgt, dataset_train, dataset_validate, 
-                        FLAGS, pass_idx=0, pass_name="dmtet_pass1", optimize_light=FLAGS.learn_light)
-
-      
+                        FLAGS, pass_idx=0, pass_name="dmtet_pass1", optimize_light=FLAGS.learn_light)      
 
 
         if FLAGS.local_rank == 0 and FLAGS.validate:
@@ -928,14 +930,11 @@ if __name__ == "__main__":
             )
 
 
-
         # Create textured mesh from result
         base_mesh = xatlas_uvmap(glctx, geometry, mat, FLAGS)
 
         # Free temporaries / cached memory 
         torch.cuda.empty_cache()
-
-
         if FLAGS.separate_rough:
             mat['kd_normal'].cleanup()
             del mat['kd_normal']
@@ -946,37 +945,38 @@ if __name__ == "__main__":
             del mat['kd_ks_normal']
            
 
-        lgt = lgt.clone()
-        geometry = DLMesh(base_mesh, FLAGS)
-
         
 
-        if FLAGS.local_rank == 0:
-            # Dump mesh for debugging.
-            os.makedirs(os.path.join(FLAGS.out_dir, "dmtet_mesh"), exist_ok=True)
-            obj.write_obj(os.path.join(FLAGS.out_dir, "dmtet_mesh/"), base_mesh)
-            light.save_env_map(os.path.join(FLAGS.out_dir, "dmtet_mesh/probe.hdr"), lgt)
+        #  --- save dmtet mesh, env---
+        os.makedirs(os.path.join(FLAGS.out_dir, "dmtet_mesh"), exist_ok=True)
+        obj.write_obj(os.path.join(FLAGS.out_dir, "dmtet_mesh/"), base_mesh)
+        light.save_env_map(os.path.join(FLAGS.out_dir, "dmtet_mesh/probe.hdr"), lgt)
 
-        # ==============================================================================================
-        #  Pass 2: Train with fixed topology (mesh)
-        # ==============================================================================================
+         
+        # ----------------- Pass 2: Train with fixed topology (mesh) ------------------
+        
+
+        lgt = lgt.clone()
+        geometry = DLMesh(base_mesh, FLAGS)
+       
         logging.info("pass2 : Starting train with fixed topology (DLMesh)")
         geometry, mat = optimize_mesh(glctx, geometry, base_mesh.material, lgt, dataset_train, dataset_validate, FLAGS, 
                     pass_idx=1, pass_name="mesh_pass", warmup_iter=100, optimize_light=FLAGS.learn_light and not FLAGS.lock_light, 
                     optimize_geometry=not FLAGS.lock_pos)
+        
+        ########################## base mesh is provided flow ##################################
     else:
-        # ==============================================================================================
-        #  Train with fixed topology (mesh)
-        # ==============================================================================================
         logging.info("Initial mesh is provided, train with fixed mesh")
         # Load initial guess mesh from file
         base_mesh = mesh.load_mesh(FLAGS.base_mesh)
         geometry = DLMesh(base_mesh, FLAGS)
         
+
         mat = initial_guess_material(geometry, False, FLAGS, init_mat=base_mesh.material)
 
         geometry, mat = optimize_mesh(glctx, geometry, mat, lgt, dataset_train, dataset_validate, FLAGS, pass_idx=0, pass_name="mesh_pass", 
                                         warmup_iter=100, optimize_light=not FLAGS.lock_light, optimize_geometry=not FLAGS.lock_pos)
+
 
     # ==============================================================================================
     #  Validate
@@ -997,12 +997,11 @@ if __name__ == "__main__":
     
 
     # ==============================================================================================
-    #  Dump output
+    #  final output
     # ==============================================================================================
-    if FLAGS.local_rank == 0:
-        final_mesh = geometry.getMesh(mat)
-        os.makedirs(os.path.join(FLAGS.out_dir, "mesh"), exist_ok=True)
-        obj.write_obj(os.path.join(FLAGS.out_dir, "mesh/"), final_mesh)
-        light.save_env_map(os.path.join(FLAGS.out_dir, "mesh/probe.hdr"), lgt)
+    final_mesh = geometry.getMesh(mat)
+    os.makedirs(os.path.join(FLAGS.out_dir, "mesh"), exist_ok=True)
+    obj.write_obj(os.path.join(FLAGS.out_dir, "mesh/"), final_mesh)
+    light.save_env_map(os.path.join(FLAGS.out_dir, "mesh/probe.hdr"), lgt)
 
 #----------------------------------------------------------------------------
