@@ -16,4 +16,4 @@ background: "white"
 validate : true
 learn_light : false
 out_dir: "output_mtl"
-separate_rough: false
+separate_ks: false

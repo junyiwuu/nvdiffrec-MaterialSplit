@@ -66,22 +66,34 @@ class DLMesh(torch.nn.Module):
         # Image-space loss, split into a coverage component and a color component
         color_ref = target['img']
 
-        img_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) 
-        loss_fn = loss_dict['image_loss_fn']
-        img_loss += loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])  # apply mask
-        # img loss  is typical calculate the final render with target
+        silhouette_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) 
+        kd_loss_fn_1 = loss_dict['kd_loss_1'] #relmse
+        kd_loss_fn_2 = loss_dict['kd_loss_2'] # msssim
 
-        if self.FLAGS.separate_rough: 
+        kd_loss_1 = kd_loss_fn_1(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
+        kd_loss_2 = kd_loss_fn_2(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
+        img_loss = kd_loss_1*0.5 + kd_loss_2*0.5 +silhouette_loss
+
+
+        if self.FLAGS.separate_ks: 
             # create loss for ks optimization
-            ks_loss_fn = loss_dict['ks_loss_fn']
-            ks_loss = ks_loss_fn(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
-                                color_ref[... , 0:3] * color_ref[... , 3:]) 
-            ks_loss = ks_loss * 0.5 + img_loss 
+            ks_loss_fn_1 = loss_dict['ks_loss_1']  # mse
+            ks_loss_1 = ks_loss_fn_1(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+                                color_ref[... , 0:3] * color_ref[... , 3:])
+            ks_loss = ks_loss_1
 
-            # if iteration % 20==0:
-            #     logging.info(f"perceptual loss: {ks_loss}")
-            #     logging.info(f"img_loss: {torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])}" )
+            if 'ks_loss_2' in loss_dict:
+                ks_loss_fn_2 = loss_dict['ks_loss_2'] 
+                ks_loss_2 = ks_loss_fn_2(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+                                color_ref[... , 0:3] * color_ref[... , 3:])
+                ks_loss = ks_loss_1*0.5 + ks_loss_2*0.5
 
+            if iteration % 10 == 0:
+                logging.debug(f"kd_loss_1: {kd_loss_1:.3f}, kd_loss_2: {kd_loss_2:.3f}")
+                if 'ks_loss_2' in loss_dict:
+                    logging.debug(f"ks_loss_1: {ks_loss_1:.3f}, ks_loss_2: {ks_loss_2:.3f}")
+                else:
+                    logging.debug(f"ks_loss_1: {ks_loss_1:.3f}, ks_loss_2: None")
 
 
         reg_loss = torch.tensor([0], dtype=torch.float32, device="cuda")
@@ -102,7 +114,7 @@ class DLMesh(torch.nn.Module):
         # Light white balance regularizer
         reg_loss = reg_loss + lgt.regularizer() * 0.005
 
-        if self.FLAGS.separate_rough: 
+        if self.FLAGS.separate_ks: 
             return img_loss, reg_loss, ks_loss
         else:
             return img_loss, reg_loss

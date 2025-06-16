@@ -7,7 +7,7 @@ ref_textures: "data/spot_1/textures"
 
 random_textures: true
 iter: 1000
-save_interval: 1000
+save_interval: 20
 texture_res: [ 1024, 1024 ]
 train_res: [512, 512]
 batch: 8
@@ -18,5 +18,7 @@ background: "white"
 validate : True
 learn_light : false
 # out_dir: "output"
-separate_rough: True
+separate_ks: True
+add_datetime_prefix: true
 loss: "relmse"
+

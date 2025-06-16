@@ -21,7 +21,7 @@ background: "black"
 validate : True
 # out_dir: "output_mtl"
 loss: "relmse"
-separate_rough: false
+separate_ks: false
 
 
 #check test here is three mlp branck

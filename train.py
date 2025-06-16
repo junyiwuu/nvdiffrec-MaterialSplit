@@ -144,7 +144,7 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
     new_mesh = mesh.Mesh(v_tex=uvs, t_tex_idx=faces, base=eval_mesh)
 
     # 将uv从mesh中反推出来，bake回来，uv就是刚生成的uv
-    if FLAGS.separate_rough:
+    if FLAGS.separate_ks:
         mask, kd, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_normal'])
         _, ks = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['ks'])
     else:
@@ -179,7 +179,7 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
 
     # when bool mlp = True
     if mlp:
-        if FLAGS.separate_rough: # if FLAGS set separating the roughness
+        if FLAGS.separate_ks: # if FLAGS set separating the roughness
             # cat kd min and norm min
             mlp_min = torch.cat((kd_min[0:3], nrm_min), dim=0)
             mlp_max = torch.cat((kd_max[0:3], nrm_max), dim=0)
@@ -394,9 +394,9 @@ class Trainer(torch.nn.Module):
                 self.light.build_mips()
         # 所有可训练参数给到这里
         # ---------------collect parameters
-        # if not FLAGS.separate_rough:
+        # if not FLAGS.separate_ks:
         #     self.params = list(self.material.parameters())
-        # if FLAGS.separate_rough:
+        # if FLAGS.separate_ks:
         #     self.params = list(self.material['kd_normal'].parameters())
         #     self.ks_params = list(self.material['ks'].parameters()) # separate ks network
 
@@ -448,7 +448,7 @@ def optimize_mesh(
     ):
 
     # ------- initialize ---------------
-    if FLAGS.separate_rough:
+    if FLAGS.separate_ks:
         train_metrics = MetricTracker(*["img_loss", "reg_loss", "iter_time", "ks_loss"])
     else:
         train_metrics = MetricTracker(*["img_loss", "reg_loss", "iter_time"])
@@ -465,32 +465,24 @@ def optimize_mesh(
     learning_rate_pos = learning_rate[0] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
     learning_rate_mat = learning_rate[1] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
 
-    def lr_schedule(iter, fraction):
-        if iter < warmup_iter:
-            return iter / warmup_iter 
-        return max(0.0, 10**(-(iter - warmup_iter)*0.0002)) # Exponential falloff from [1.0, 0.1] over 5k epochs.    
 
-    _decay_ks_rate = 0.0002
-    def ks_lr_lambda(it):
-        if it < warmup_ks_iter:
-            return 0.01 + 0.99  * (it/warmup_ks_iter)
-        elif it < warmup_ks_iter + hold_ks_iters:
-            return 1.0
-        else:
-            frac = (it - warmup_ks_iter - hold_ks_iters) / (FLAGS.iter - warmup_ks_iter - hold_ks_iters)
-            return max(0.1, 1.0 - frac)
-        
     # ==============================================================================================
     #   loss
     # ==============================================================================================
     loss_dict = {}
-    if FLAGS.ref_textures:
-        loss_dict["ks_loss_fn"] = createLoss(FLAGS.ks_loss)
-        loss_dict['image_loss_fn'] = createLoss(FLAGS.loss)
-        logging.debug(f"choose {FLAGS.ks_loss} as loss for ks, choose {FLAGS.loss} as loss for other parts")
+    # if FLAGS.ref_textures and FLAGS.separate_ks:
+    if FLAGS.separate_ks:
+        # loss_dict["ks_loss_fn"] = createLoss(FLAGS.ks_loss)
+        # loss_dict['image_pixel_loss_fn'] = createLoss(FLAGS.loss)
+        loss_dict['kd_loss_1'] = createLoss(FLAGS.kd_loss_1)
+        loss_dict['kd_loss_2'] = createLoss(FLAGS.kd_loss_2)
+        loss_dict["ks_loss_1"] = createLoss(FLAGS.ks_loss_1)
+        if FLAGS.ks_loss_2 is not None:
+            loss_dict["ks_loss_2"] = createLoss(FLAGS.ks_loss_2)
+        
     else: 
         loss_dict['image_loss_fn'] = createLoss(FLAGS.loss)
-        logging.debug(f"choose {FLAGS.loss} as loss for all")
+        logging.debug(f"kd, normal and mesh loss selections:  {FLAGS.loss} ")
 
 
 
@@ -505,20 +497,75 @@ def optimize_mesh(
 
     trainer = trainer_noddp
 
-    if optimize_geometry:
-        optimizer_mesh = torch.optim.Adam(trainer_noddp.geo_params, lr=learning_rate_pos, betas=betas)
-        scheduler_mesh = torch.optim.lr_scheduler.LambdaLR(optimizer_mesh, lr_lambda=lambda x: lr_schedule(x, 0.9)) 
 
-    if FLAGS.separate_rough:
-        optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
-        warmup_ks_iter = int(0.1*FLAGS.iter)
-        hold_ks_iters = int(0.3*FLAGS.iter)
+    def lr_warmup_schedule(iter, fraction):
+        if iter < warmup_iter:
+            return iter / warmup_iter 
+        return max(0.0, 10**(-(iter - warmup_iter)*0.0002)) # Exponential falloff from [1.0, 0.1] over 5k epochs.    
+    
+    def lr_stage1_schedule(iter):
+        first_half = FLAGS.iter * 0.5
+        start, end = 1.0, 0.75
+        if iter < first_half:
+            return start + (end-start)*(iter/first_half)
+        else:
+            return max(0.0, end*10**(-(iter - first_half)*0.0002))
+    
+    def lr_stage2_schedule(iter):
+        first_half = FLAGS.iter * 0.5
+        if iter > first_half:
+            return max(0.0, 10**(-(iter - first_half)*0.0002))
+        else:
+            return iter / first_half 
+    
+    _decay_ks_rate = 0.0002
+    def ks_lr_lambda(it):
+        if it < warmup_ks_iter:
+            return 0.01 + 0.99  * (it/warmup_ks_iter)
+        elif it < warmup_ks_iter + hold_ks_iters:
+            return 1.0
+        else:
+            frac = (it - warmup_ks_iter - hold_ks_iters) / (FLAGS.iter - warmup_ks_iter - hold_ks_iters)
+            return max(0.1, 1.0 - frac)
         
+
+    # ==============================================================================================
+    #   3 stages
+    # ============================================================================================== 
+   
+
+    if warmup_iter == 0: # in pass 1
+    # during the first pass, ks use stage2 schedule -> when iter > half, it starting optimization
+    # other parts are opposite                    
+        if optimize_geometry:
+            optimizer_mesh = torch.optim.Adam(trainer_noddp.geo_params, lr=learning_rate_pos, betas=betas)
+            scheduler_mesh = torch.optim.lr_scheduler.LambdaLR(optimizer_mesh, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
+
+        optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_stage1_schedule(x)) 
+
+        optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
+        scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: lr_stage2_schedule(x))
+
+
+
+    else: # in pass 2
+        if optimize_geometry:
+            optimizer_mesh = torch.optim.Adam(trainer_noddp.geo_params, lr=learning_rate_pos, betas=betas)
+            scheduler_mesh = torch.optim.lr_scheduler.LambdaLR(optimizer_mesh, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
+
+        optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
+
+        warmup_ks_iter = int(0.2*FLAGS.iter)
+        hold_ks_iters = int(0.2*FLAGS.iter)
+        optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
         scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: ks_lr_lambda(x))
 
+        
 
-    optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_schedule(x, 0.9)) 
+    # optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
 
     
 
@@ -583,14 +630,14 @@ def optimize_mesh(
         optimizer.zero_grad()
         if optimize_geometry:
             optimizer_mesh.zero_grad()
-        if FLAGS.separate_rough:
+        if FLAGS.separate_ks:
             optimizer_ks.zero_grad()
 
         # ==============================================================================================
         #  Training
         # ==============================================================================================
         # 相当于geometry.tick，得到loss
-        if not FLAGS.separate_rough:
+        if not FLAGS.separate_ks:
             img_loss, reg_loss = trainer(target, it)
         else:
             img_loss, reg_loss, ks_loss = trainer(target, it)
@@ -604,7 +651,7 @@ def optimize_mesh(
         train_metrics.update("img_loss", img_loss.item())
         train_metrics.update("reg_loss", reg_loss.item()) 
         train_metrics.update("iter_time", time.time() - start_time)
-        if FLAGS.separate_rough:
+        if FLAGS.separate_ks:
             train_metrics.update("ks_loss" , ks_loss.item())
 
         # ==============================================================================================
@@ -612,11 +659,11 @@ def optimize_mesh(
         # ==============================================================================================
         total_loss.backward(retain_graph=True)  # calculate gradient
         # activate the ks loss
-        if FLAGS.separate_rough:
+        if FLAGS.separate_ks:
             ks_loss.backward()
 
         # ------------ print gradient - debug --------------
-        if FLAGS.separate_rough:
+        if FLAGS.separate_ks:
             total_norm = 0.0
             for name, p in trainer.material['ks'].named_parameters():
                 # tb_logger.writer.add_histogram(f"ks/{name}grad", p.grad.cpu().detach().numpy(), global_step=it)
@@ -642,7 +689,7 @@ def optimize_mesh(
         if optimize_geometry:
             optimizer_mesh.step()
             scheduler_mesh.step()
-        if FLAGS.separate_rough:
+        if FLAGS.separate_ks:
             optimizer_ks.step()
             scheduler_ks.step()
 
@@ -684,11 +731,18 @@ def optimize_mesh(
         )
 
         # ks learning rate
-        if FLAGS.separate_rough:
+        if FLAGS.separate_ks:
             tb_logger.writer.add_scalar(
                 f"{pass_name}/ks_lr",
                 scheduler_ks.get_last_lr()[0],
                 global_step=it        
+            )
+
+        if optimize_geometry:
+            tb_logger.writer.add_scalar(
+                f"{pass_name}/mesh_lr",
+                scheduler_mesh.get_last_lr()[0],
+                global_step=it
             )
 
 
@@ -742,6 +796,15 @@ if __name__ == "__main__":
     parser.add_argument('-rt', '--random-textures', action='store_true', default=False)
     parser.add_argument('-bg', '--background', default='checker', choices=['black', 'white', 'checker', 'reference'])
     parser.add_argument('--loss', default='logl1', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse'])
+
+    parser.add_argument('--kd_loss_1', default='relmse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
+    parser.add_argument('--kd_loss_2', default='msssim', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
+    parser.add_argument('--ks_loss_1', default='mse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
+    parser.add_argument('--ks_loss_2', default=None, choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
+    
+    
+
+
     parser.add_argument('-o', '--out-dir', type=str, default="output")
     parser.add_argument('-rm', '--ref_mesh', type=str)
     # add ref texture forlder
@@ -749,7 +812,7 @@ if __name__ == "__main__":
     parser.add_argument('-bm', '--base-mesh', type=str, default=None)
     parser.add_argument('--validate', type=bool, default=True)
     parser.add_argument('--isosurface', default='dmtet', choices=['dmtet', 'flexicubes'])
-    parser.add_argument('-srough', '--separate_rough', type=bool, default=True)
+    parser.add_argument('-srough', '--separate_ks', type=bool, default=True)
     
     
     FLAGS = parser.parse_args()
@@ -778,7 +841,7 @@ if __name__ == "__main__":
     FLAGS.add_datetime_prefix = False
     # add for roughness MLP
     
-    FLAGS.ks_loss             = "msssim"
+    FLAGS.ks_loss             = "mse"
 
 
 
@@ -811,37 +874,37 @@ if __name__ == "__main__":
     pure_job_name = os.path.basename(FLAGS.config).split(".")[0]
     # add time prefix
     if FLAGS.add_datetime_prefix:
-        job_name = f"{t_start.strftime('%y_%m_%d-%H_%M_%S')}-{pure_job_name}"
+        job_name = f"{FLAGS.loss}-{t_start.strftime('%y_%m_%d-%H_%M')}"
     else:
-        job_name = pure_job_name
+        job_name = f"{FLAGS.loss}"
 
     # create output directory
     if FLAGS.out_dir is not None:
-        out_dir_job = os.path.join(FLAGS.out_dir, job_name)
+        out_dir_job = os.path.join(FLAGS.out_dir, pure_job_name, job_name)
     else:
-        out_dir_job = os.path.join('./output', job_name)
+        out_dir_job = os.path.join('./output', pure_job_name, job_name)
     os.makedirs(out_dir_job, exist_ok=True)
 
     # tensorboard
-    out_dir_tb = os.path.join(out_dir_job, "tensorboard", FLAGS.loss)
+    out_dir_tb = os.path.join(FLAGS.out_dir, pure_job_name, "tensorboard", job_name)
     if not os.path.exists(out_dir_tb):
         os.makedirs(out_dir_tb)
 
     # tensorboard setup  设置tensorboard的路径
     tb_logger.set_dir(out_dir_tb)
 
-    out_dir_loss = os.path.join(out_dir_job, FLAGS.loss)
-    if not os.path.exists(out_dir_loss):
-        os.makedirs(out_dir_loss)
+    # out_dir_loss = os.path.join(out_dir_job, FLAGS.loss)
+    # if not os.path.exists(out_dir_loss):
+    #     os.makedirs(out_dir_loss)
 
     # evaluation folder
-    out_dir_eval = os.path.join(out_dir_loss, "evaluation")
+    out_dir_eval = os.path.join(out_dir_job, "evaluation")
     if not os.path.exists(out_dir_eval):
         os.makedirs(out_dir_eval)
 
 
     # logging settings
-    config_logging(cfg.logging, out_dir=out_dir_loss)
+    config_logging(cfg.logging, out_dir=out_dir_job)
     logging.debug(f"config: {cfg}") # print all cfg information, save as debug level
 
     # -----------------display / out_dir----------------------------------------
@@ -936,7 +999,7 @@ if __name__ == "__main__":
 
         # Free temporaries / cached memory 
         torch.cuda.empty_cache()
-        if FLAGS.separate_rough:
+        if FLAGS.separate_ks:
             mat['kd_normal'].cleanup()
             del mat['kd_normal']
             mat['ks'].cleanup()
@@ -949,9 +1012,9 @@ if __name__ == "__main__":
         
 
         #  --- save dmtet mesh, env---
-        os.makedirs(os.path.join(out_dir_job, FLAGS.loss, "dmtet_mesh"), exist_ok=True)
-        obj.write_obj(os.path.join(out_dir_job, FLAGS.loss, "dmtet_mesh/"), base_mesh)
-        light.save_env_map(os.path.join(out_dir_job, FLAGS.loss, "dmtet_mesh/probe.hdr"), lgt)
+        os.makedirs(os.path.join(out_dir_job, "dmtet_mesh"), exist_ok=True)
+        obj.write_obj(os.path.join(out_dir_job, "dmtet_mesh/"), base_mesh)
+        light.save_env_map(os.path.join(out_dir_job, "dmtet_mesh/probe.hdr"), lgt)
 
          
         # ----------------- Pass 2: Train with fixed topology (mesh) ------------------
@@ -1001,8 +1064,8 @@ if __name__ == "__main__":
     #  final output
     # ==============================================================================================
     final_mesh = geometry.getMesh(mat)
-    os.makedirs(os.path.join(out_dir_job, FLAGS.loss, "mesh"), exist_ok=True)
-    obj.write_obj(os.path.join(out_dir_job, FLAGS.loss, "mesh/"), final_mesh)
-    light.save_env_map(os.path.join(out_dir_job, FLAGS.loss, "mesh/probe.hdr"), lgt)
+    os.makedirs(os.path.join(out_dir_job, "mesh"), exist_ok=True)
+    obj.write_obj(os.path.join(out_dir_job, "mesh/"), final_mesh)
+    light.save_env_map(os.path.join(out_dir_job, "mesh/probe.hdr"), lgt)
 
 #----------------------------------------------------------------------------
