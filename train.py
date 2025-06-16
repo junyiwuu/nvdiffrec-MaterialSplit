@@ -569,7 +569,10 @@ def optimize_mesh(
                 if display_image:
                     util.display_image(np_result_image, title='%d / %d' % (it, FLAGS.iter))
                 if save_image:
-                    util.save_image(FLAGS.out_dir + '/' + ('img_%s_%06d.png' % (pass_name, img_cnt)), np_result_image)
+                    pure_job_name = os.path.basename(FLAGS.config).split(".")[0]
+                    save_image_folder = os.path.join(FLAGS.out_dir , pure_job_name, FLAGS.loss, "pass_images")
+                    os.makedirs(save_image_folder, exist_ok=True)
+                    util.save_image(save_image_folder + '/' + ('img_%s_%06d.png' % (pass_name, img_cnt)), np_result_image)
                     img_cnt = img_cnt+1
 
         iter_start_time = time.time()
@@ -609,7 +612,8 @@ def optimize_mesh(
         # ==============================================================================================
         total_loss.backward(retain_graph=True)  # calculate gradient
         # activate the ks loss
-        ks_loss.backward()
+        if FLAGS.separate_rough:
+            ks_loss.backward()
 
         # ------------ print gradient - debug --------------
         if FLAGS.separate_rough:
@@ -680,11 +684,12 @@ def optimize_mesh(
         )
 
         # ks learning rate
-        tb_logger.writer.add_scalar(
-            f"{pass_name}/ks_lr",
-            scheduler_ks.get_last_lr()[0],
-            global_step=it        
-        )
+        if FLAGS.separate_rough:
+            tb_logger.writer.add_scalar(
+                f"{pass_name}/ks_lr",
+                scheduler_ks.get_last_lr()[0],
+                global_step=it        
+            )
 
 
             # logging.info(f"currently is iter : {it}")
@@ -737,13 +742,14 @@ if __name__ == "__main__":
     parser.add_argument('-rt', '--random-textures', action='store_true', default=False)
     parser.add_argument('-bg', '--background', default='checker', choices=['black', 'white', 'checker', 'reference'])
     parser.add_argument('--loss', default='logl1', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse'])
-    parser.add_argument('-o', '--out-dir', type=str, default=None)
+    parser.add_argument('-o', '--out-dir', type=str, default="output")
     parser.add_argument('-rm', '--ref_mesh', type=str)
     # add ref texture forlder
     parser.add_argument('-rtex', '--ref_textures', type=str)
     parser.add_argument('-bm', '--base-mesh', type=str, default=None)
     parser.add_argument('--validate', type=bool, default=True)
     parser.add_argument('--isosurface', default='dmtet', choices=['dmtet', 'flexicubes'])
+    parser.add_argument('-srough', '--separate_rough', type=bool, default=True)
     
     
     FLAGS = parser.parse_args()
@@ -771,7 +777,7 @@ if __name__ == "__main__":
     FLAGS.learn_light         = True
     FLAGS.add_datetime_prefix = False
     # add for roughness MLP
-    FLAGS.separate_rough      = True
+    
     FLAGS.ks_loss             = "msssim"
 
 
@@ -841,13 +847,11 @@ if __name__ == "__main__":
     # -----------------display / out_dir----------------------------------------
     if FLAGS.display_res is None:
         FLAGS.display_res = FLAGS.train_res
-    if FLAGS.out_dir is None:
-        FLAGS.out_dir = f"out/cube_{FLAGS.train_res[0]}x{FLAGS.train_res[1]}"
-    else:
-        FLAGS.out_dir = 'out/' + FLAGS.out_dir
-
-
-    os.makedirs(FLAGS.out_dir, exist_ok=True)
+    # if FLAGS.out_dir is None:
+    #     FLAGS.out_dir = f"out/cube_{FLAGS.train_res[0]}x{FLAGS.train_res[1]}"
+    # else:
+    #     FLAGS.out_dir = 'out/' + FLAGS.out_dir
+    # os.makedirs(FLAGS.out_dir, exist_ok=True)
 
     # glctx = dr.RasterizeGLContext()
     glctx = dr.RasterizeCudaContext()
@@ -943,9 +947,9 @@ if __name__ == "__main__":
         
 
         #  --- save dmtet mesh, env---
-        os.makedirs(os.path.join(FLAGS.out_dir, "dmtet_mesh"), exist_ok=True)
-        obj.write_obj(os.path.join(FLAGS.out_dir, "dmtet_mesh/"), base_mesh)
-        light.save_env_map(os.path.join(FLAGS.out_dir, "dmtet_mesh/probe.hdr"), lgt)
+        os.makedirs(os.path.join(out_dir_job, FLAGS.loss, "dmtet_mesh"), exist_ok=True)
+        obj.write_obj(os.path.join(out_dir_job, FLAGS.loss, "dmtet_mesh/"), base_mesh)
+        light.save_env_map(os.path.join(out_dir_job, FLAGS.loss, "dmtet_mesh/probe.hdr"), lgt)
 
          
         # ----------------- Pass 2: Train with fixed topology (mesh) ------------------
@@ -995,8 +999,8 @@ if __name__ == "__main__":
     #  final output
     # ==============================================================================================
     final_mesh = geometry.getMesh(mat)
-    os.makedirs(os.path.join(FLAGS.out_dir, "mesh"), exist_ok=True)
-    obj.write_obj(os.path.join(FLAGS.out_dir, "mesh/"), final_mesh)
-    light.save_env_map(os.path.join(FLAGS.out_dir, "mesh/probe.hdr"), lgt)
+    os.makedirs(os.path.join(out_dir_job, FLAGS.loss, "mesh"), exist_ok=True)
+    obj.write_obj(os.path.join(out_dir_job, FLAGS.loss, "mesh/"), final_mesh)
+    light.save_env_map(os.path.join(out_dir_job, FLAGS.loss, "mesh/probe.hdr"), lgt)
 
 #----------------------------------------------------------------------------

@@ -10,6 +10,7 @@
 import os
 import numpy as np
 import torch
+import logging
 
 
 from . import util
@@ -178,6 +179,29 @@ def save_mtl(fn, material):
             f.write('Tf 1 1 1\n')
             f.write('Ni 1\n')
             f.write('Ns 0\n')
+
+
+@torch.no_grad()
+def save_textures(folder_path, material):
+    os.makedirs(folder_path, exist_ok=True)
+    if 'ks' in material.keys():
+        ks_base = material['ks'].getMips()[0]
+        # save occlusion, roughness and metallic separately
+        texture.save_texture2D(os.path.join(folder_path, "occlusion_Raw.png"), ks_base[..., :1])
+        logging.info("Occlusion texture exported")
+        texture.save_texture2D(os.path.join(folder_path, "roughness_Raw.png") , ks_base[..., 1:2])
+        logging.info("Roughness texture exported")
+        texture.save_texture2D(os.path.join(folder_path, "metallic_Raw.png") , ks_base[..., 2:])
+        logging.info("Metallic texture exported")
+
+    if 'kd' in material.keys():
+        texture.save_texture2D(os.path.join(folder_path, 'albedo_srgb.png'), texture.rgb_to_srgb(material['kd']))
+        logging.info("Albedo texture exported")
+    if 'normal' in material.keys():
+        texture.save_texture2D(os.path.join(folder_path, 'normal.png'), material['normal'], lambda_fn=lambda x:(util.safe_normalize(x)+1)*0.5)
+        logging.info("Normal texture exported")
+
+
 
 ######################################################################################
 # Merge multiple materials into a single uber-material

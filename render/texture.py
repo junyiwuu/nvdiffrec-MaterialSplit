@@ -181,6 +181,9 @@ def _save_mip2D(fn, mip, mipidx, lambda_fn):
     else:
         data = mip.detach().cpu().numpy()
 
+    if data.ndim == 3 and data.shape[2]==1:
+        data = data[..., 0]  # transfer to [H, W] when only one channel
+
     if mipidx is None:
         util.save_image(fn, data)
     else:

@@ -181,8 +181,15 @@ def write_obj(folder, mesh, save_material=True):
             f.write("\n")
 
     if save_material:
-        mtl_file = os.path.join(folder, 'mesh.mtl')
-        print("Writing material: ", mtl_file)
-        material.save_mtl(mtl_file, mesh.material)
+        # mtl_file = os.path.join(folder, 'mesh.mtl')
+        # print("Writing material: ", mtl_file)
+        # material.save_mtl(mtl_file, mesh.material)
+        texture_folder = os.path.join(folder, "textures")
+        os.makedirs(texture_folder, exist_ok=True)
+        
+        logging.debug(f"output texture folder: {texture_folder}")
+        print("Writing material: ", texture_folder)
+        material.save_textures(texture_folder, mesh.material)
+
 
     print("Done exporting mesh")
