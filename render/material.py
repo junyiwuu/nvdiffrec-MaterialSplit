@@ -102,11 +102,21 @@ def load_mtl(fn, clear_ks=True):
     return materials
 
 @torch.no_grad
-def load_textures( textures_path):
+def load_textures(filename, textures_path):
+
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    for line in lines:
+        parts = line.split()
+        if not parts:
+            continue
+        prefix = parts[0].lower()
+        if prefix == 'usemtl': # Track used materials
+            mat_name = parts[1]
 
     materials = []
 
-    mat = Material({"name": "feathers"})
+    mat = Material({"name": mat_name})
     materials.append(mat)
 
     rough=None
@@ -115,8 +125,11 @@ def load_textures( textures_path):
     for filename in os.listdir(textures_path):
         lowername = filename.lower()
         fullpath = os.path.join(textures_path, filename)
+        # logging.debug(f"find lowername: {lowername}")
         if "albedo" in lowername or "basecolor" in lowername:
+            # logging.debug(f"fine albedo or basecolor in {lowername}")
             mat['kd'] = texture.load_texture2D(fullpath, channels=3)
+            # logging.debug(f"load kd texture2d")
             mat['kd'] = texture.srgb_to_rgb(mat['kd'])  # use linear data to render, write out with srgb
 
     
@@ -137,7 +150,7 @@ def load_textures( textures_path):
         mat['kd'] = texture.Texture2D(torch.tensor([0.5, 0.5, 0.5], device='cuda'))
 
     if rough is None:
-        rough = torch.full((1, 1, 1), 0.5, device='cuda')
+        rough = torch.full((1, 1, 1), 0.01, device='cuda')
 
     # for occlusion
     occlusion = torch.zeros_like(rough)

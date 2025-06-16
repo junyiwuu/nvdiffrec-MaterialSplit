@@ -624,7 +624,7 @@ def optimize_mesh(
                     logging.debug(f"[DEBIG Ks] {name} grad is None")
                 else:
                     total_norm += p.grad.norm().item()**2
-                    logging.debug(f"[DEBUG Ks] {name} grad norm = {p.grad.norm():.3e}")
+                    # logging.debug(f"[DEBUG Ks] {name} grad norm = {p.grad.norm():.3e}")
             total_norm = total_norm**0.05
 
             tb_logger.writer.add_scalar("ks/grad_norm", total_norm, global_step=it)
@@ -861,10 +861,12 @@ if __name__ == "__main__":
     # ==============================================================================================
     if os.path.splitext(FLAGS.ref_mesh)[1] == '.obj':
         if not FLAGS.ref_textures:
+            logging.debug("no FLAGS.ref_textures")
             ref_mesh         = mesh.load_mesh(FLAGS.ref_mesh, FLAGS.mtl_override)
             dataset_train    = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=False)
             dataset_validate = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=True)
         else: # using seperate textures, not mtl
+            logging.debug(f"FLAGS.ref_textures path : {FLAGS.ref_textures}")
             ref_mesh         = mesh.load_mesh(FLAGS.ref_mesh, FLAGS.mtl_override, textures_path=FLAGS.ref_textures)
             dataset_train    = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=False)
             dataset_validate = DatasetMesh(ref_mesh, glctx, RADIUS, FLAGS, validate=True)

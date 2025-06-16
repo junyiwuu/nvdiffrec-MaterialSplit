@@ -45,7 +45,9 @@ def load_obj(filename, clear_ks=True, mtl_override=None, textures_path=None):
             'ks'   : texture.Texture2D(torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda'))
         }
     ]
-    if mtl_override is None: 
+    # logging.debug(f"textures_path: {textures_path}")
+    if mtl_override is None and textures_path is None: 
+        # logging.debug(f"mtl_override is None and textures_path is None")
         for line in lines:
             if len(line.split()) == 0:
                 continue
@@ -55,7 +57,7 @@ def load_obj(filename, clear_ks=True, mtl_override=None, textures_path=None):
         all_materials += material.load_mtl(mtl_override)
     if textures_path:
         logging.info("load custom textures")
-        all_materials += material.load_textures(textures_path=textures_path)
+        all_materials += material.load_textures(filename=filename, textures_path=textures_path)
         
     
 

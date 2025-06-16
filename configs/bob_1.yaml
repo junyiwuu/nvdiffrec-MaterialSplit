@@ -19,8 +19,9 @@ envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 env_scale : 1
 background: "black"
 validate : True
-# out_dir: "output"
+# out_dir: "output_mtl"
 loss: "relmse"
+separate_rough: false
 
 
 #check test here is three mlp branck
