@@ -617,7 +617,7 @@ def optimize_mesh(
                     util.display_image(np_result_image, title='%d / %d' % (it, FLAGS.iter))
                 if save_image:
                     pure_job_name = os.path.basename(FLAGS.config).split(".")[0]
-                    save_image_folder = os.path.join(FLAGS.out_dir , pure_job_name, FLAGS.loss, "pass_images")
+                    save_image_folder = os.path.join(out_dir_job, "pass_images")
                     os.makedirs(save_image_folder, exist_ok=True)
                     util.save_image(save_image_folder + '/' + ('img_%s_%06d.png' % (pass_name, img_cnt)), np_result_image)
                     img_cnt = img_cnt+1
