@@ -14,14 +14,19 @@ texture_res: [ 1024, 1024 ]
 train_res: [512, 512]
 batch: 4
 learning_rate: [0.03, 0.003]
-ks_min : [0, 0.01, 0]
+ks_min : [0, 0.001, 0]
 envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 env_scale : 1
 background: "black"
 validate : True
 # out_dir: "output_mtl"
 loss: "relmse"
-separate_ks: false
+
+kd_loss_1: "smape"
+ks_loss_1: "relmse"
+ks_loss_2: "mse"
+separate_ks: True
+add_datetime_prefix: true
 
 
 #check test here is three mlp branck

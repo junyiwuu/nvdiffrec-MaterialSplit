@@ -22,3 +22,7 @@ separate_ks: True
 add_datetime_prefix: true
 loss: "relmse"
 
+kd_loss_1: "smape"
+ks_loss_1: "relmse"
+ks_loss_2: "mse"
+

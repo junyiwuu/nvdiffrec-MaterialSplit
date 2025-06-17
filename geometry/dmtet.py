@@ -249,7 +249,7 @@ class DMTetGeometry(torch.nn.Module):
                 ks_loss_fn_2 = loss_dict['ks_loss_2'] 
                 ks_loss_2 = ks_loss_fn_2(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
                                 color_ref[... , 0:3] * color_ref[... , 3:])
-                ks_loss = ks_loss_1*0.5 + ks_loss_2*0.5
+                ks_loss = ks_loss_1*0.7 + ks_loss_2*0.3
 
             if iteration % 10 == 0:
                 logging.debug(f"kd_loss_1: {kd_loss_1:.3f}, kd_loss_2: {kd_loss_2:.3f}")
