@@ -59,7 +59,7 @@ def _perceptualLoss(img, target, eps=0.0001):
 def _msssim(img, target, eps=0.0001):
     pred_img = img.permute(0, 3, 1, 2) 
     pred_target = target.permute(0,3,1,2) 
-    return (1-ms_ssim(pred_img, pred_target))
+    return (1-ms_ssim(pred_img, pred_target, win_size=5, size_average=True))
 
 
 
@@ -75,8 +75,8 @@ def image_loss_fn(img, target, loss, tonemapper):
         return _SMAPE(img, target)
     elif loss == 'relmse':
         return _RELMSE(img, target)
-    elif loss == 'perceptual':
-        return _perceptualLoss(img, target)
+    # elif loss == 'perceptual':
+    #     return _perceptualLoss(img, target)
     elif loss == "msssim":
         return _msssim(img, target)
     else:

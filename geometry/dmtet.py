@@ -209,7 +209,7 @@ class DMTetGeometry(torch.nn.Module):
     def render(self, glctx, target, lgt, opt_material, bsdf=None):
         opt_mesh = self.getMesh(opt_material)
         return render.render_mesh(glctx, opt_mesh, target['mvp'], target['campos'], lgt, target['resolution'], spp=target['spp'], 
-                                        msaa=True, background=target['background'], bsdf=bsdf)
+                                        msaa=True, background=target['background'], bsdf=bsdf, disable_occl=self.FLAGS.disable_occlusion)
 
 
     def tick(self, glctx, target, lgt, opt_material, loss_dict, iteration):
@@ -235,7 +235,9 @@ class DMTetGeometry(torch.nn.Module):
 
         kd_loss_1 = kd_loss_fn_1(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
         kd_loss_2 = kd_loss_fn_2(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
-        img_loss = kd_loss_1*0.5 + kd_loss_2*0.5 +silhouette_loss
+        # kd_loss_1 should be pixel level loss
+        # kd_loss_2 should be strcture / perceptual loss
+        img_loss = kd_loss_1*0.35 + kd_loss_2*0.15 +silhouette_loss*0.5
 
 
         if self.FLAGS.separate_ks: 
@@ -249,12 +251,16 @@ class DMTetGeometry(torch.nn.Module):
                 ks_loss_fn_2 = loss_dict['ks_loss_2'] 
                 ks_loss_2 = ks_loss_fn_2(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
                                 color_ref[... , 0:3] * color_ref[... , 3:])
-                ks_loss = ks_loss_1*0.7 + ks_loss_2*0.3
+                ks_loss = ks_loss_1*0.7 + ks_loss_2*0.3 # if increate ks_loss_2, to 0.8 and decrease 2 to 0.2, put more in metallic
+                # ks_loss_2, mse is very important
+
+            ks_loss += torch.mean(buffers['ks_grad'][..., :-1] * buffers['ks_grad'][..., -1:]) * 0.03 * min(1.0, iteration / 500)
 
             if iteration % 10 == 0:
                 logging.debug(f"kd_loss_1: {kd_loss_1:.3f}, kd_loss_2: {kd_loss_2:.3f}")
                 if 'ks_loss_2' in loss_dict:
                     logging.debug(f"ks_loss_1: {ks_loss_1:.3f}, ks_loss_2: {ks_loss_2:.3f}")
+                    logging.debug(f"silhouette_loss: {silhouette_loss:.3f}")
                 else:
                     logging.debug(f"ks_loss_1: {ks_loss_1:.3f}, ks_loss_2: None")
 

@@ -9,24 +9,26 @@ ref_mesh  : "data/bob_1/bob_tri.obj"
 ref_textures: "data/bob_1/textures"
 random_textures: true
 iter: 1000
-save_interval: 100
+save_interval: 20
 texture_res: [ 1024, 1024 ]
 train_res: [512, 512]
 batch: 4
 learning_rate: [0.03, 0.003]
 ks_min : [0, 0.001, 0]
+# ks_min : [0.001, 0]
 envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 env_scale : 1
 background: "black"
 validate : True
 # out_dir: "output_mtl"
+separate_ks: True
 loss: "relmse"
 
 kd_loss_1: "smape"
+kd_loss_2 : "logl1"
 ks_loss_1: "relmse"
 ks_loss_2: "mse"
-separate_ks: True
+
 add_datetime_prefix: true
 
-
-#check test here is three mlp branck
+disable_occlusion: true

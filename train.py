@@ -78,8 +78,8 @@ def createLoss(loss_type ):
         return lambda img, ref: ru.image_loss(img, ref, loss='mse', tonemapper='log_srgb')
     elif loss_type == "relmse":
         return lambda img, ref: ru.image_loss(img, ref, loss='relmse', tonemapper='none')
-    elif loss_type == "perceptual":
-        return lambda img, ref: ru.image_loss(img, ref, loss='perceptual', tonemapper='log_srgb')
+    # elif loss_type == "perceptual":
+    #     return lambda img, ref: ru.image_loss(img, ref, loss='perceptual', tonemapper='log_srgb')
     elif loss_type == "msssim":
         return lambda img, ref: ru.image_loss(img, ref, loss='msssim', tonemapper="log_srgb")
     
@@ -143,10 +143,17 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
     # 
     new_mesh = mesh.Mesh(v_tex=uvs, t_tex_idx=faces, base=eval_mesh)
 
-    # 将uv从mesh中反推出来，bake回来，uv就是刚生成的uv
+    # sample the texture, not write out, already have uv
     if FLAGS.separate_ks:
         mask, kd, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_normal'])
         _, ks = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['ks'])
+        # logging.info(f"ks shape : {ks.shape}")
+        # ks: [1, 1024, 1024, 3]
+        # if FLAGS.disable_occlusion:
+        #     ks = ks[... , 1:]  # remove occlusion, not allow it transfer into nn.Module
+
+
+        
     else:
         mask, kd, ks, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_ks_normal'])
         
@@ -185,7 +192,13 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
             mlp_max = torch.cat((kd_max[0:3], nrm_max), dim=0)
 
             mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), channels=6, min_max=[mlp_min, mlp_max])
-            mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), channels=3, min_max=[ks_min, ks_max])
+
+            if FLAGS.disable_occlusion:
+                ks_min = ks_min[1:]
+                ks_max = ks_max[1:]
+                mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16 ,channels=2, min_max=[ks_min, ks_max])
+            else: # if not disable occlusion channel in ks
+                mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16, channels=3, min_max=[ks_min, ks_max])
             
             mat =  material.Material({
                 'kd_normal' : mlp_map_opt,
@@ -410,6 +423,7 @@ class Trainer(torch.nn.Module):
             self.params = list(self.material['kd'].parameters())
             self.params += list(self.material['normal'].parameters())
             self.ks_params = list(self.material['ks'].parameters())
+            
 
         self.params += list(self.light.parameters()) if optimize_light else []
         self.geo_params = list(self.geometry.parameters()) if optimize_geometry else []
@@ -797,13 +811,14 @@ if __name__ == "__main__":
     parser.add_argument('-bg', '--background', default='checker', choices=['black', 'white', 'checker', 'reference'])
     parser.add_argument('--loss', default='logl1', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse'])
 
-    parser.add_argument('--kd_loss_1', default='relmse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
-    parser.add_argument('--kd_loss_2', default='msssim', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
-    parser.add_argument('--ks_loss_1', default='mse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
-    parser.add_argument('--ks_loss_2', default=None, choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'perceptual', 'msssim'])
+    parser.add_argument('--kd_loss_1', default='relmse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
+    parser.add_argument('--kd_loss_2', default='msssim', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
+    parser.add_argument('--ks_loss_1', default='mse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
+    parser.add_argument('--ks_loss_2', default=None, choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
     
     
-
+    # if disable ao channel, for strong light envrionment, or for try
+    parser.add_argument('--disable_occlusion', type=bool, default=False)
 
     parser.add_argument('-o', '--out-dir', type=str, default="output")
     parser.add_argument('-rm', '--ref_mesh', type=str)
@@ -813,9 +828,11 @@ if __name__ == "__main__":
     parser.add_argument('--validate', type=bool, default=True)
     parser.add_argument('--isosurface', default='dmtet', choices=['dmtet', 'flexicubes'])
     parser.add_argument('-srough', '--separate_ks', type=bool, default=True)
-    
-    
+
+    parser.add_argument('-com', '--comment', type=str, default="None")
     FLAGS = parser.parse_args()
+
+    
 
     FLAGS.mtl_override        = None                     # Override material of model
     FLAGS.dmtet_grid          = 64                       # Resolution of initial tet grid. We provide 64 and 128 resolution grids. Other resolutions can be generated with https://github.com/crawforddoran/quartet
@@ -834,6 +851,7 @@ if __name__ == "__main__":
     FLAGS.kd_max              = [ 1.0,  1.0,  1.0,  1.0]
     FLAGS.ks_min              = [ 0.0, 0.08,  0.0]       # Limits for ks
     FLAGS.ks_max              = [ 1.0,  1.0,  1.0]
+
     FLAGS.nrm_min             = [-1.0, -1.0,  0.0]       # Limits for normal map
     FLAGS.nrm_max             = [ 1.0,  1.0,  1.0]
     FLAGS.cam_near_far        = [0.1, 1000.0]
@@ -906,6 +924,7 @@ if __name__ == "__main__":
     # logging settings
     config_logging(cfg.logging, out_dir=out_dir_job)
     logging.debug(f"config: {cfg}") # print all cfg information, save as debug level
+    logging.info(f"Comment: {FLAGS.comment}")
 
     # -----------------display / out_dir----------------------------------------
     if FLAGS.display_res is None:
@@ -994,7 +1013,7 @@ if __name__ == "__main__":
             )
 
 
-        # Create textured mesh from result
+        # write out mesh and texture
         base_mesh = xatlas_uvmap(glctx, geometry, mat, FLAGS)
 
         # Free temporaries / cached memory 
@@ -1013,7 +1032,7 @@ if __name__ == "__main__":
 
         #  --- save dmtet mesh, env---
         os.makedirs(os.path.join(out_dir_job, "dmtet_mesh"), exist_ok=True)
-        obj.write_obj(os.path.join(out_dir_job, "dmtet_mesh/"), base_mesh)
+        obj.write_obj(os.path.join(out_dir_job, "dmtet_mesh/"), base_mesh) # write obj and textures
         light.save_env_map(os.path.join(out_dir_job, "dmtet_mesh/probe.hdr"), lgt)
 
          

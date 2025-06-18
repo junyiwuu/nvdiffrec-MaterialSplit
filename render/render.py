@@ -40,7 +40,8 @@ def shade(
         view_pos,
         lgt,
         material,
-        bsdf
+        bsdf,
+        disable_occl
     ):
     # logging.debug("start shade")
 
@@ -69,10 +70,23 @@ def shade(
         kd_norm_tex_jitter = material['kd_normal'].sample(gb_pos + torch.normal(mean=0, std=0.01, size=gb_pos.shape, device="cuda"))
         kd_norm_tex = material['kd_normal'].sample(gb_pos)
 
-        assert kd_norm_tex.shape[-1] == 6 or kd_norm_tex.shape[-1] == 7, "Combined kd_ks_normal must be 9 or 10 channels"
+        assert kd_norm_tex.shape[-1] == 6 or kd_norm_tex.shape[-1] == 7, "if separate ks, kd_normal must be 6 or 7 channels"
 
         kd, perturbed_nrm = kd_norm_tex[..., :-3], kd_norm_tex[..., -3: ]
-        ks = material['ks'].sample(gb_pos)
+        if disable_occl:
+            ks2_tex_jitter = material['ks'].sample(gb_pos + torch.normal(mean=0, std=0.003, size=gb_pos.shape, device="cuda"))
+            ks2 = material['ks'].sample(gb_pos)
+            # mlp is two channel, add one more for occlusion
+
+            occlusion = torch.zeros_like(ks2[..., :1])
+            ks = torch.cat([occlusion, ks2], dim=-1)
+
+            ks_grad    = torch.sum(torch.abs(ks2_tex_jitter[..., : ] - ks2[..., : ]), dim=-1, keepdim=True) / 3
+        else:
+            ks_tex_jitter = material['ks'].sample(gb_pos + torch.normal(mean=0, std=0.003, size=gb_pos.shape, device="cuda"))
+            ks = material['ks'].sample(gb_pos)
+
+            ks_grad    = torch.sum(torch.abs(ks_tex_jitter[..., : ] - ks[..., : ]), dim=-1, keepdim=True) / 3
 
         kd_grad = torch.sum(torch.abs(kd_norm_tex_jitter[..., :-3] - kd_norm_tex[..., :-3]) , dim=-1, keepdim=True)/3
 
@@ -83,12 +97,12 @@ def shade(
         # 如果不是MLP合成贴图，那就每个单个来采样
         # 采样带jitter的kd
         kd_jitter  = material['kd'].sample(gb_texc + torch.normal(mean=0, std=0.005, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
-
         # 在uv坐标采样albedo
         kd = material['kd'].sample(gb_texc, gb_texc_deriv)
 
         # 用uv坐标采样specular，只取前三个通道
         ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:3] # skip alpha
+        ks_jitter  = material['kd'].sample(gb_texc + torch.normal(mean=0, std=0.00, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
 
         # 如果有normal的话采样normal
         if 'normal' in material:
@@ -96,6 +110,7 @@ def shade(
 
         # 计算kd的regularization，用jitter版本和没有jitter版本做计算
         kd_grad    = torch.sum(torch.abs(kd_jitter[..., 0:3] - kd[..., 0:3]), dim=-1, keepdim=True) / 3
+        ks_grad    = torch.sum(torch.abs(ks_jitter[..., 0:3] - ks[..., 0:3]), dim=-1, keepdim=True) / 3
 
     # Separate kd into alpha and color, default alpha = 1
     alpha = kd[..., 3:4] if kd.shape[-1] == 4 else torch.ones_like(kd[..., 0:1]) 
@@ -143,7 +158,9 @@ def shade(
     buffers = {
         'shaded'    : torch.cat((shaded_col, alpha), dim=-1),
         'kd_grad'   : torch.cat((kd_grad, alpha), dim=-1),
-        'occlusion' : torch.cat((ks[..., :1], alpha), dim=-1)
+        'occlusion' : torch.cat((ks[..., :1], alpha), dim=-1),
+
+        'ks_grad'   : torch.cat((ks_grad, alpha), dim=-1),
     }
     return buffers
 
@@ -162,7 +179,8 @@ def render_layer(
         resolution,
         spp,
         msaa,
-        bsdf
+        bsdf,
+        disable_occl
     ):
     # logging.debug("start render layer")
     full_res = [resolution[0]*spp, resolution[1]*spp]
@@ -209,7 +227,7 @@ def render_layer(
     ################################################################################
 
     buffers = shade(gb_pos, gb_geometric_normal, gb_normal, gb_tangent, gb_texc, gb_texc_deriv, 
-        view_pos, lgt, mesh.material, bsdf)
+        view_pos, lgt, mesh.material, bsdf, disable_occl=disable_occl)
 
     ################################################################################
     # Prepare output
@@ -243,7 +261,8 @@ def render_mesh(
         num_layers  = 1,
         msaa        = False,
         background  = None, 
-        bsdf        = None
+        bsdf        = None,
+        disable_occl=False
     ):
     # logging.debug("start render mesh")
     # 处理shape
@@ -252,7 +271,7 @@ def render_mesh(
         return x[:, None, None, :] if len(x.shape) == 2 else x
     
     # -------------------- world space -> clip space ---------------------------
-    def composite_buffer(key, layers, background, antialias):
+    def composite_buffer(key, layers, background, antialias, ):
         accum = background
         for buffers, rast in reversed(layers):
             alpha = (rast[..., -1:] > 0).float() * buffers[key][..., -1:]
@@ -278,7 +297,7 @@ def render_mesh(
     with dr.DepthPeeler(ctx, v_pos_clip, mesh.t_pos_idx.int(), full_res) as peeler:
         for _ in range(num_layers):
             rast, db = peeler.rasterize_next_layer()
-            layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf), rast)]
+            layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf, disable_occl=disable_occl), rast)]
 
     # ----------------------Setup background----------------
     if background is not None:
@@ -332,5 +351,10 @@ def render_uv(ctx, mesh, resolution, mlp_texture):
         return (rast[..., -1:] > 0).float(), all_tex[..., :-3], util.safe_normalize(perturbed_nrm)
     if all_tex.shape[-1] == 3:
         return (rast[..., -1:] > 0).float(), all_tex
+    if all_tex.shape[-1] == 2: # ks only do roughness and metallic, occlusion is 0
+        occlusion = torch.zeros_like(all_tex[... , :1])
+        all_tex = torch.cat([occlusion, all_tex], dim=-1)
+        return (rast[..., -1:] > 0).float(), all_tex
+
 
 
