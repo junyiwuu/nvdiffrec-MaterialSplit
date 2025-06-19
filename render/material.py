@@ -199,6 +199,18 @@ def save_textures(folder_path, material):
     os.makedirs(folder_path, exist_ok=True)
     if 'ks' in material.keys():
         ks_base = material['ks'].getMips()[0]
+        ks_channels = ks_base.shape[-1]
+        
+        if ks_channels==2:
+            ks2 = ks_base
+            occlusion = torch.zeros_like(ks2[..., :1])
+            ks_base = torch.cat([occlusion, ks2], dim=-1)
+
+        elif ks_channels==3:
+            pass
+        else:
+            raise ValueError(f"Need check ks channels is neither 2 or 3, it is : {ks_channels}")
+
         # save occlusion, roughness and metallic separately
         texture.save_texture2D(os.path.join(folder_path, "occlusion_Raw.png"), ks_base[..., :1])
         logging.info("Occlusion texture exported")
@@ -206,6 +218,8 @@ def save_textures(folder_path, material):
         logging.info("Roughness texture exported")
         texture.save_texture2D(os.path.join(folder_path, "metallic_Raw.png") , ks_base[..., 2:])
         logging.info("Metallic texture exported")
+            
+        
 
     if 'kd' in material.keys():
         texture.save_texture2D(os.path.join(folder_path, 'albedo_srgb.png'), texture.rgb_to_srgb(material['kd']))

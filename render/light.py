@@ -102,9 +102,14 @@ class EnvironmentLight(torch.nn.Module):
     def shade(self, gb_pos, gb_normal, kd, ks, view_pos, specular=True):
         wo = util.safe_normalize(view_pos - gb_pos)
 
+        ks_channels = ks.shape[-1]
         if specular:
-            roughness = ks[..., 1:2] # y component
-            metallic  = ks[..., 2:3] # z component
+            if ks_channels == 3:
+                roughness = ks[..., 1:2] # y component
+                metallic  = ks[..., 2:3] # z component
+            if ks_channels == 2:
+                roughness = ks[..., 0:1] # y component
+                metallic  = ks[..., 1:2] # z component
             spec_col  = (1.0 - metallic)*0.04 + kd * metallic
             diff_col  = kd * (1.0 - metallic)
         else:

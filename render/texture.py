@@ -66,8 +66,7 @@ class Texture2D(torch.nn.Module):
     # Filtered (trilinear) sample texture at a given location
     def sample(self, texc, texc_deriv, filter_mode='linear-mipmap-linear'):
         if isinstance(self.data, list):
-            # 因为多级mipmap是list
-            # 用nvdiffrast的dr.texture采样
+            # 因为多级mipmap是list     # 用nvdiffrast的dr.texture采样
             out = dr.texture(self.data[0], texc, texc_deriv, mip=self.data[1:], filter_mode=filter_mode)
         else:
             # 如果不是list，也就是只有单张贴图，自动生成mipmap

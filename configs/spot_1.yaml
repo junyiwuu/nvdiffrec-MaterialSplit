@@ -6,7 +6,7 @@ ref_mesh: "data/spot_1/spot.obj"
 ref_textures: "data/spot_1/textures"
 
 random_textures: true
-iter: 50
+iter: 1000
 save_interval: 20
 texture_res: [ 1024, 1024 ]
 train_res: [512, 512]
@@ -20,7 +20,7 @@ validate : True
 learn_light : false
 # out_dir: "output"
 separate_ks: True
-# add_datetime_prefix: true
+add_datetime_prefix: true
 loss: "relmse"
 
 kd_loss_1: "logl1"

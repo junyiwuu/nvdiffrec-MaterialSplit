@@ -149,8 +149,9 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
         _, ks = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['ks'])
         # logging.info(f"ks shape : {ks.shape}")
         # ks: [1, 1024, 1024, 3]
-        # if FLAGS.disable_occlusion:
-        #     ks = ks[... , 1:]  # remove occlusion, not allow it transfer into nn.Module
+        if FLAGS.disable_occlusion:
+            ks = ks[... , 1:]  # remove occlusion, not allow it transfer into nn.Module
+            # ks = ks2.contiguous() # avoid C_contiguous issue
 
 
         
@@ -519,11 +520,11 @@ def optimize_mesh(
     
     def lr_stage1_schedule(iter):
         first_half = FLAGS.iter * 0.5
-        start, end = 1.0, 0.75
+        start, end = 1.0, 0.68
         if iter < first_half:
             return start + (end-start)*(iter/first_half)
         else:
-            return max(0.0, end*10**(-(iter - first_half)*0.0002))
+            return max(0.0, end*10**(-(iter - first_half)*0.0001))
     
     def lr_stage2_schedule(iter):
         first_half = FLAGS.iter * 0.5
@@ -1040,7 +1041,7 @@ if __name__ == "__main__":
         
 
         lgt = lgt.clone()
-        geometry = DLMesh(base_mesh, FLAGS)
+        geometry = DLMesh(base_mesh, FLAGS)   # register vertex as nn.parameters
        
         logging.info("pass2 : Starting train with fixed topology (DLMesh)")
         geometry, mat = optimize_mesh(glctx, geometry, base_mesh.material, lgt, dataset_train, dataset_validate, FLAGS, 

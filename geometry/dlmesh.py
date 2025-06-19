@@ -91,7 +91,7 @@ class DLMesh(torch.nn.Module):
             
             ks_loss += torch.mean(buffers['ks_grad'][..., :-1] * buffers['ks_grad'][..., -1:]) * 0.03 * min(1.0, iteration / 500)
 
-            if iteration % 10 == 0:
+            if iteration % 50 == 0:
                 logging.debug(f"kd_loss_1: {kd_loss_1:.3f}, kd_loss_2: {kd_loss_2:.3f}")
                 if 'ks_loss_2' in loss_dict:
                     logging.debug(f"ks_loss_1: {ks_loss_1:.3f}, ks_loss_2: {ks_loss_2:.3f}")

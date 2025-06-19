@@ -86,31 +86,43 @@ def shade(
             ks_tex_jitter = material['ks'].sample(gb_pos + torch.normal(mean=0, std=0.003, size=gb_pos.shape, device="cuda"))
             ks = material['ks'].sample(gb_pos)
 
-            ks_grad    = torch.sum(torch.abs(ks_tex_jitter[..., : ] - ks[..., : ]), dim=-1, keepdim=True) / 3
+            ks_grad    = torch.sum(torch.abs(ks_tex_jitter[..., : ] - ks[..., : ]), dim=-1, keepdim=True) / 2
 
         kd_grad = torch.sum(torch.abs(kd_norm_tex_jitter[..., :-3] - kd_norm_tex[..., :-3]) , dim=-1, keepdim=True)/3
 
 
 
     else:
-
+        # Texture2D case
         # 如果不是MLP合成贴图，那就每个单个来采样
-        # 采样带jitter的kd
         kd_jitter  = material['kd'].sample(gb_texc + torch.normal(mean=0, std=0.005, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
         # 在uv坐标采样albedo
         kd = material['kd'].sample(gb_texc, gb_texc_deriv)
 
-        # 用uv坐标采样specular，只取前三个通道
-        ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:3] # skip alpha
-        ks_jitter  = material['kd'].sample(gb_texc + torch.normal(mean=0, std=0.00, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
+        kd_grad    = torch.sum(torch.abs(kd_jitter[..., 0:3] - kd[..., 0:3]), dim=-1, keepdim=True) / 3
 
         # 如果有normal的话采样normal
         if 'normal' in material:
             perturbed_nrm = material['normal'].sample(gb_texc, gb_texc_deriv)
 
-        # 计算kd的regularization，用jitter版本和没有jitter版本做计算
-        kd_grad    = torch.sum(torch.abs(kd_jitter[..., 0:3] - kd[..., 0:3]), dim=-1, keepdim=True) / 3
+        # 用uv坐标采样specular，只取前三个通道
+        # logging.info(f"what is kd size: {material['kd'].getMips()[0].shape}")
+        # logging.info(f"what is ks size: {material['ks'].getMips()[0].shape}")
+        ks_jitter  = material['ks'].sample(gb_texc + torch.normal(mean=0, std=0.00, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
+        # based on current material['ks] - which nn.parameter   -> sample on the uv cooridnate, and got result 
+        if disable_occl:
+            
+            ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:2] # skip alpha
+            occlusion = torch.zeros_like(ks[..., :1])         
+
+            ks = torch.cat([occlusion, ks], dim=-1)    
+            ks_jitter = torch.cat([occlusion, ks_jitter], dim=-1) 
+
+        else:
+            ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:3] # skip alpha
+        
         ks_grad    = torch.sum(torch.abs(ks_jitter[..., 0:3] - ks[..., 0:3]), dim=-1, keepdim=True) / 3
+
 
     # Separate kd into alpha and color, default alpha = 1
     alpha = kd[..., 3:4] if kd.shape[-1] == 4 else torch.ones_like(kd[..., 0:1]) 
