@@ -106,13 +106,19 @@ def load_textures(filename, textures_path):
 
     with open(filename, 'r') as f:
         lines = f.readlines()
+    found_mtl = False
     for line in lines:
         parts = line.split()
         if not parts:
             continue
         prefix = parts[0].lower()
+
         if prefix == 'usemtl': # Track used materials
             mat_name = parts[1]
+            found_mtl = True
+    
+    if not found_mtl:
+        mat_name = "import_default"
 
     materials = []
 

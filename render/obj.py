@@ -86,12 +86,15 @@ def load_obj(filename, clear_ks=True, mtl_override=None, textures_path=None):
     activeMatIdx = None
     used_materials = []
     faces, tfaces, nfaces, mfaces = [], [], [], []
+
+    found_mtl = False
     for line in lines:
         if len(line.split()) == 0:
             continue
 
         prefix = line.split()[0].lower()
         if prefix == 'usemtl': # Track used materials
+            found_mtl = True
             mat = _find_mat(all_materials, line.split()[1])
             if not mat in used_materials:
                 used_materials.append(mat)
@@ -116,12 +119,19 @@ def load_obj(filename, clear_ks=True, mtl_override=None, textures_path=None):
                 faces.append([v0, v1, v2])
                 tfaces.append([t0, t1, t2])
                 nfaces.append([n0, n1, n2])
+    if not found_mtl:
+        mat = _find_mat(all_materials, "import_default")
+        used_materials.append(mat)
+
     assert len(tfaces) == len(faces) and len(nfaces) == len (faces)
 
+    print(f"how many mat do we have : {len(used_materials)}")
     # Create an "uber" material by combining all textures into a larger texture
     if len(used_materials) > 1:
         uber_material, texcoords, tfaces = material.merge_materials(used_materials, texcoords, tfaces, mfaces)
+        print("need to merge materials?")
     else:
+        
         uber_material = used_materials[0]
 
     vertices = torch.tensor(vertices, dtype=torch.float32, device='cuda')
