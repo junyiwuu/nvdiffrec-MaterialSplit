@@ -8,6 +8,8 @@
 
 import numpy as np
 import torch
+import logging
+
 
 from render import mesh
 from render import render
@@ -138,7 +140,7 @@ class FlexiCubesGeometry(torch.nn.Module):
                                         msaa=True, background=target['background'], bsdf=bsdf,disable_occl=self.FLAGS.disable_occlusion)
 
 
-    def tick(self, glctx, target, lgt, opt_material, loss_fn, iteration):
+    def tick(self, glctx, target, lgt, opt_material, loss_dict, iteration):
 
         # ==============================================================================================
         #  Render optimizable object with identical conditions
@@ -150,18 +152,74 @@ class FlexiCubesGeometry(torch.nn.Module):
         # ==============================================================================================
         t_iter = iteration / self.FLAGS.iter
 
-        # Image-space loss, split into a coverage component and a color component
-        color_ref = target['img']
+        # # Image-space loss, split into a coverage component and a color component
+        # color_ref = target['img']
         
-        # 这里关注的是alpha loss，因为用的是最后一个通道
-        img_loss = torch.nn.functional.l1_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])*5.0 
-        # 这里才开始算color的部分，前三个通道
-        img_loss = img_loss + loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
+        # # 这里关注的是alpha loss，因为用的是最后一个通道
+        # img_loss = torch.nn.functional.l1_loss(buffers['shaded'][..., 3:], color_ref[..., 3:])*5.0 
+        # # 这里才开始算color的部分，前三个通道
+        # img_loss = img_loss + loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
 
-        # SDF regularizer 
-        # FLAG为1, sdf_weihgt最小会是0.01
+        # # SDF regularizer 
+        # # FLAG为1, sdf_weihgt最小会是0.01
+        # sdf_weight = self.FLAGS.sdf_regularizer - (self.FLAGS.sdf_regularizer - 0.01)*min(1.0, 4.0 * t_iter)
+        # # 暂时不知道是什么，有点乱，待会儿看
+        # reg_loss = sdf_reg_loss(self.sdf, self.all_edges).mean() * sdf_weight # Dropoff to 0.01
+
+        # # Albedo (k_d) smoothnesss regularizer
+        # reg_loss += torch.mean(buffers['kd_grad'][..., :-1] * buffers['kd_grad'][..., -1:]) * 0.03 * min(1.0, iteration / 500)
+
+        # # Visibility regularizer
+        # reg_loss += torch.mean(buffers['occlusion'][..., :-1] * buffers['occlusion'][..., -1:]) * 0.001 * min(1.0, iteration / 500)
+
+        # # FlexiCubes reg loss
+        # reg_loss += self.flexi_reg_loss* 0.25
+
+        # # Light white balance regularizer
+        # reg_loss = reg_loss + lgt.regularizer() * 0.005
+
+        # return img_loss, reg_loss
+
+
+        color_ref = target['img']
+        silhouette_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) 
+        kd_loss_fn_1 = loss_dict['kd_loss_1'] #relmse
+        kd_loss_fn_2 = loss_dict['kd_loss_2'] # msssim
+
+        kd_loss_1 = kd_loss_fn_1(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
+        kd_loss_2 = kd_loss_fn_2(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
+        # kd_loss_1 should be pixel level loss
+        # kd_loss_2 should be strcture / perceptual loss
+        img_loss = kd_loss_1*0.35 + kd_loss_2*0.15 +silhouette_loss*0.5
+
+
+        if self.FLAGS.separate_ks: 
+            # create loss for ks optimization
+            ks_loss_fn_1 = loss_dict['ks_loss_1']  # mse
+            ks_loss_1 = ks_loss_fn_1(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+                                color_ref[... , 0:3] * color_ref[... , 3:])
+            ks_loss = ks_loss_1
+
+            if 'ks_loss_2' in loss_dict:
+                ks_loss_fn_2 = loss_dict['ks_loss_2'] 
+                ks_loss_2 = ks_loss_fn_2(buffers['shaded'][... , 0:3] * color_ref[... , 3:],
+                                color_ref[... , 0:3] * color_ref[... , 3:])
+                ks_loss = ks_loss_1*0.7 + ks_loss_2*0.3 # if increate ks_loss_2, to 0.8 and decrease 2 to 0.2, put more in metallic
+                # ks_loss_2, mse is very important
+
+            ks_loss += torch.mean(buffers['ks_grad'][..., :-1] * buffers['ks_grad'][..., -1:]) * 0.03 * min(1.0, iteration / 500)
+
+            if iteration % 50 == 0:
+                logging.debug(f"kd_loss_1: {kd_loss_1:.3f}, kd_loss_2: {kd_loss_2:.3f}")
+                if 'ks_loss_2' in loss_dict:
+                    logging.debug(f"ks_loss_1: {ks_loss_1:.3f}, ks_loss_2: {ks_loss_2:.3f}")
+                    logging.debug(f"silhouette_loss: {silhouette_loss:.3f}")
+                else:
+                    logging.debug(f"ks_loss_1: {ks_loss_1:.3f}, ks_loss_2: None")
+
+
+        # SDF regularizer
         sdf_weight = self.FLAGS.sdf_regularizer - (self.FLAGS.sdf_regularizer - 0.01)*min(1.0, 4.0 * t_iter)
-        # 暂时不知道是什么，有点乱，待会儿看
         reg_loss = sdf_reg_loss(self.sdf, self.all_edges).mean() * sdf_weight # Dropoff to 0.01
 
         # Albedo (k_d) smoothnesss regularizer
@@ -176,5 +234,8 @@ class FlexiCubesGeometry(torch.nn.Module):
         # Light white balance regularizer
         reg_loss = reg_loss + lgt.regularizer() * 0.005
 
-        return img_loss, reg_loss
+        if self.FLAGS.separate_ks: 
+            return img_loss, reg_loss, ks_loss
+        else:
+            return img_loss, reg_loss
 

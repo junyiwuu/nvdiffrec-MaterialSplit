@@ -1,9 +1,8 @@
 base_config:
 - configs/logging.yaml
 
-
-ref_mesh: "data/spot_1/spot.obj"
-ref_textures: "data/spot_1/textures"
+ref_mesh: "data/megascan/eggplant/eggplant.obj"
+ref_textures: "data/megascan/eggplant"
 
 random_textures: true
 iter: 1000
@@ -18,7 +17,7 @@ envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 background: "white"
 validate : True
 
-out_dir: "output_learnLGT"
+out_dir: "output_collection"
 separate_ks: True
 add_datetime_prefix: true
 
@@ -36,7 +35,7 @@ ks_loss_1: "relmse"
 ks_loss_2: "mse"
 
 
-disable_occlusion: true
+disable_occlusion: false
 
 isosurface : "flexicubes"
-dmtet_grid : 48
+dmtet_grid : 72

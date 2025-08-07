@@ -2,6 +2,7 @@ data/
 dataset/
 out/
 output/
+output*/
 out_check.png
 **/__pycache__/
 spot_metal/
