@@ -18,7 +18,7 @@ envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 background: "white"
 validate : True
 
-out_dir: "output_learnLGT"
+out_dir: "output_test"
 separate_ks: True
 add_datetime_prefix: true
 
@@ -37,6 +37,7 @@ ks_loss_2: "mse"
 
 
 disable_occlusion: true
+disable_metallic: true
 
 isosurface : "flexicubes"
 dmtet_grid : 48

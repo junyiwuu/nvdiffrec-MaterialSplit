@@ -103,13 +103,16 @@ class EnvironmentLight(torch.nn.Module):
         wo = util.safe_normalize(view_pos - gb_pos)
 
         ks_channels = ks.shape[-1]
+        # print(f"DEBUG: ks.shape = {ks.shape}, ks_channels = {ks_channels}")
         if specular:
-            if ks_channels == 3:
-                roughness = ks[..., 1:2] # y component
-                metallic  = ks[..., 2:3] # z component
-            if ks_channels == 2:
-                roughness = ks[..., 0:1] # y component
-                metallic  = ks[..., 1:2] # z component
+            # when second round, ks not three channels anymore
+            # if ks_channels == 3:
+            # print(f"DEBUG: light.shade - ks.shape = {ks.shape}")
+            roughness = ks[..., 1:2]
+            metallic  = ks[..., 2:3]
+            # print(f"DEBUG: roughness.shape = {roughness.shape}, metallic.shape = {metallic.shape}")
+                
+
             spec_col  = (1.0 - metallic)*0.04 + kd * metallic
             diff_col  = kd * (1.0 - metallic)
         else:

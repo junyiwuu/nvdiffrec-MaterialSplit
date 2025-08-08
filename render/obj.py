@@ -148,7 +148,7 @@ def load_obj(filename, clear_ks=True, mtl_override=None, textures_path=None):
 # Save mesh object to objfile
 ######################################################################################
 
-def write_obj(folder, mesh, save_material=True):
+def write_obj(folder, mesh, save_material=True, disable_occlusion=False, disable_metallic=False):
     obj_file = os.path.join(folder, 'mesh.obj')
     print("Writing mesh: ", obj_file)
     with open(obj_file, "w") as f:
@@ -201,7 +201,7 @@ def write_obj(folder, mesh, save_material=True):
         
         logging.debug(f"output texture folder: {texture_folder}")
         print("Writing material: ", texture_folder)
-        material.save_textures(texture_folder, mesh.material)
+        material.save_textures(texture_folder, mesh.material, disable_occlusion, disable_metallic)
 
 
     print("Done exporting mesh")

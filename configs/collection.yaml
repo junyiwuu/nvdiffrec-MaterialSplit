@@ -5,7 +5,7 @@ ref_mesh: "data/megascan/eggplant/eggplant.obj"
 ref_textures: "data/megascan/eggplant"
 
 random_textures: true
-iter: 1000
+iter: 500
 save_interval: 20
 texture_res: [ 1024, 1024 ]
 train_res: [512, 512]
@@ -17,7 +17,8 @@ envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 background: "white"
 validate : True
 
-out_dir: "output_collection"
+# out_dir: "output_collection"
+out_dir: "test"
 separate_ks: True
 add_datetime_prefix: true
 
@@ -35,7 +36,8 @@ ks_loss_1: "relmse"
 ks_loss_2: "mse"
 
 
-disable_occlusion: false
+disable_occlusion: true
+disable_metallic : true
 
 isosurface : "flexicubes"
-dmtet_grid : 72
+dmtet_grid : 48

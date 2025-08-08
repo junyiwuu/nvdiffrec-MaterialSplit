@@ -41,7 +41,8 @@ def shade(
         lgt,
         material,
         bsdf,
-        disable_occl
+        disable_occl,
+        disable_metal
     ):
     # logging.debug("start shade")
 
@@ -73,20 +74,30 @@ def shade(
         assert kd_norm_tex.shape[-1] == 6 or kd_norm_tex.shape[-1] == 7, "if separate ks, kd_normal must be 6 or 7 channels"
 
         kd, perturbed_nrm = kd_norm_tex[..., :-3], kd_norm_tex[..., -3: ]
-        if disable_occl:
-            ks2_tex_jitter = material['ks'].sample(gb_pos + torch.normal(mean=0, std=0.003, size=gb_pos.shape, device="cuda"))
-            ks2 = material['ks'].sample(gb_pos)
+
+        ks = material['ks'].sample(gb_pos)
+        empty = torch.zeros_like(ks[..., :1])
+        ks_tex_jitter = material['ks'].sample(gb_pos + torch.normal(mean=0, std=0.003, size=gb_pos.shape, device="cuda"))
+        if disable_occl and disable_metal: # if we disable both occlusion and metallic
+            # mlp is one channel
+            ks              = torch.cat([empty, ks, empty], dim=-1)
+            ks_tex_jitter   = torch.cat([empty, ks_tex_jitter, empty], dim=-1)
+
+
+        elif disable_metal: # if we disabled metallic
+            # print(f"KS TEX JITTER SIZE: {ks_tex_jitter.shape}")
+            # print(f"KS size: {ks.shape}")
+            ks              = torch.cat([ks, empty], dim=-1)
+            ks_tex_jitter   = torch.cat([ks_tex_jitter, empty], dim=-1)
+
+        elif disable_occl: # if we disabled occlusion
             # mlp is two channel, add one more for occlusion
+            # print(f"DEBUG: disable_occl - ks.shape before: {ks.shape}")
+            ks              = torch.cat([empty, ks], dim=-1)
+            ks_tex_jitter   = torch.cat([empty, ks_tex_jitter], dim=-1)
+            # print(f"DEBUG: disable_occl - ks.shape after: {ks.shape}")
 
-            occlusion = torch.zeros_like(ks2[..., :1])
-            ks = torch.cat([occlusion, ks2], dim=-1)
-
-            ks_grad    = torch.sum(torch.abs(ks2_tex_jitter[..., : ] - ks2[..., : ]), dim=-1, keepdim=True) / 3
-        else:
-            ks_tex_jitter = material['ks'].sample(gb_pos + torch.normal(mean=0, std=0.003, size=gb_pos.shape, device="cuda"))
-            ks = material['ks'].sample(gb_pos)
-
-            ks_grad    = torch.sum(torch.abs(ks_tex_jitter[..., : ] - ks[..., : ]), dim=-1, keepdim=True) / 2
+        ks_grad    = torch.sum(torch.abs(ks_tex_jitter[..., : ] - ks[..., : ]), dim=-1, keepdim=True) / 3
 
         kd_grad = torch.sum(torch.abs(kd_norm_tex_jitter[..., :-3] - kd_norm_tex[..., :-3]) , dim=-1, keepdim=True)/3
 
@@ -94,7 +105,6 @@ def shade(
 
     else:
         # Texture2D case
-        # 如果不是MLP合成贴图，那就每个单个来采样
         kd_jitter  = material['kd'].sample(gb_texc + torch.normal(mean=0, std=0.005, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
         # 在uv坐标采样albedo
         kd = material['kd'].sample(gb_texc, gb_texc_deriv)
@@ -108,20 +118,49 @@ def shade(
         # 用uv坐标采样specular，只取前三个通道
         # logging.info(f"what is kd size: {material['kd'].getMips()[0].shape}")
         # logging.info(f"what is ks size: {material['ks'].getMips()[0].shape}")
-        ks_jitter  = material['ks'].sample(gb_texc + torch.normal(mean=0, std=0.00, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
+       
         # based on current material['ks] - which nn.parameter   -> sample on the uv cooridnate, and got result 
-        if disable_occl:
-            
-            ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:2] # skip alpha
-            occlusion = torch.zeros_like(ks[..., :1])         
 
-            ks = torch.cat([occlusion, ks], dim=-1)    
-            ks_jitter = torch.cat([occlusion, ks_jitter], dim=-1) 
+        mean_ = 0.0
+        std_  = 0.0
+
+        ks = material['ks'].sample(gb_texc, gb_texc_deriv)
+        empty = torch.zeros_like(ks[..., :1])
+        
+        if disable_metal and disable_occl:
+            # print("DEBUG: disable both")
+            # input only one channel
+        
+            ks_jitter   = material['ks'].sample(gb_texc + torch.normal(mean=mean_, std=std_, size=gb_texc.shape, device="cuda"), gb_texc_deriv)[..., :1]
+                        
+            ks = torch.cat([empty, ks, empty], dim=-1)    
+            ks_jitter = torch.cat([empty, ks_jitter, empty], dim=-1) 
+            
+
+        #input two channel
+        elif disable_occl:
+            # print("DEBUG: disable occlusion")
+            ks_jitter   = material['ks'].sample(gb_texc + torch.normal(mean=mean_, std=std_, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
+
+            ks = torch.cat([empty, ks], dim=-1)    
+            ks_jitter = torch.cat([empty, ks_jitter], dim=-1) 
+
+        elif disable_metal:
+            # print("DEBUG: disable metal")
+            ks_jitter   = material['ks'].sample(gb_texc + torch.normal(mean=mean_, std=std_, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
+                        
+            ks = torch.cat([ ks, empty], dim=-1)    
+            ks_jitter = torch.cat([ ks_jitter, empty], dim=-1) 
 
         else:
-            ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:3] # skip alpha
+            # print("DEBUG: disable non")
+            ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:3] # skip alpha, limited to frist three
+            ks_jitter   = material['ks'].sample(gb_texc + torch.normal(mean=mean_, std=std_, size=gb_texc.shape, device="cuda"), gb_texc_deriv)[..., 0:3]
+        
+        #all output from here is 3 channels
         
         ks_grad    = torch.sum(torch.abs(ks_jitter[..., 0:3] - ks[..., 0:3]), dim=-1, keepdim=True) / 3
+        
 
 
     # Separate kd into alpha and color, default alpha = 1
@@ -147,6 +186,7 @@ def shade(
     bsdf = material['bsdf'] if bsdf is None else bsdf
     if bsdf == 'pbr':
         if isinstance(lgt, light.EnvironmentLight):
+            # here in the second round ks is not three channels
             shaded_col = lgt.shade(gb_pos, gb_normal, kd, ks, view_pos, specular=True)
         else:
             assert False, "Invalid light type"
@@ -192,7 +232,8 @@ def render_layer(
         spp,
         msaa,
         bsdf,
-        disable_occl
+        disable_occl,
+        disable_metal
     ):
     # logging.debug("start render layer")
     full_res = [resolution[0]*spp, resolution[1]*spp]
@@ -239,7 +280,7 @@ def render_layer(
     ################################################################################
 
     buffers = shade(gb_pos, gb_geometric_normal, gb_normal, gb_tangent, gb_texc, gb_texc_deriv, 
-        view_pos, lgt, mesh.material, bsdf, disable_occl=disable_occl)
+        view_pos, lgt, mesh.material, bsdf, disable_occl=disable_occl, disable_metal=disable_metal)
 
     ################################################################################
     # Prepare output
@@ -274,7 +315,8 @@ def render_mesh(
         msaa        = False,
         background  = None, 
         bsdf        = None,
-        disable_occl=False
+        disable_occl=False,
+        disable_metal=False
     ):
     # logging.debug("start render mesh")
     # 处理shape
@@ -309,7 +351,7 @@ def render_mesh(
     with dr.DepthPeeler(ctx, v_pos_clip, mesh.t_pos_idx.int(), full_res) as peeler:
         for _ in range(num_layers):
             rast, db = peeler.rasterize_next_layer()
-            layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf, disable_occl=disable_occl), rast)]
+            layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf, disable_occl=disable_occl, disable_metal=disable_metal), rast)]
 
     # ----------------------Setup background----------------
     if background is not None:
@@ -336,7 +378,7 @@ def render_mesh(
 # ==============================================================================================
 #  Render UVs
 # ==============================================================================================
-def render_uv(ctx, mesh, resolution, mlp_texture):
+def render_uv(ctx, mesh, resolution, mlp_texture, disable_occl=False, disable_metal=False):
 
     # clip space transform 
     uv_clip = mesh.v_tex[None, ...]*2.0 - 1.0
@@ -358,15 +400,31 @@ def render_uv(ctx, mesh, resolution, mlp_texture):
     # util.norm: 把perturbed normal normalized化，避免数值不规范导致shading的问题
 
     if all_tex.shape[-1] == 9 or all_tex.shape[-1] == 10:
-        return (rast[..., -1:] > 0).float(), all_tex[..., :-6], all_tex[..., -6:-3], util.safe_normalize(perturbed_nrm)        
-    if all_tex.shape[-1] == 6 or all_tex.shape[-1] == 7:
-        return (rast[..., -1:] > 0).float(), all_tex[..., :-3], util.safe_normalize(perturbed_nrm)
-    if all_tex.shape[-1] == 3:
-        return (rast[..., -1:] > 0).float(), all_tex
-    if all_tex.shape[-1] == 2: # ks only do roughness and metallic, occlusion is 0
-        occlusion = torch.zeros_like(all_tex[... , :1])
-        all_tex = torch.cat([occlusion, all_tex], dim=-1)
-        return (rast[..., -1:] > 0).float(), all_tex
+        return (rast[..., -1:] > 0).float(),   all_tex[..., :-6], all_tex[..., -6:-3], util.safe_normalize(perturbed_nrm)        
+    elif all_tex.shape[-1] == 6 or all_tex.shape[-1] == 7:
+        return (rast[..., -1:] > 0).float(),   all_tex[..., :-3], util.safe_normalize(perturbed_nrm)
+    elif all_tex.shape[-1] == 3:
+        return (rast[..., -1:] > 0).float(),   all_tex
+    else:
+
+        empty = torch.zeros_like(all_tex[..., :1])
+
+        if disable_metal and disable_occl:
+            # here only have one channel
+            assert all_tex.shape[-1] == 1 , f"in render_uv, both flag disabled, should only have 1 channel, but get {all_tex.shape[-1]} channels"
+            all_tex = torch.cat([empty, all_tex, empty], dim=-1)
+            return (rast[..., -1:] > 0).float(), all_tex
+        
+        elif disable_metal:
+            all_tex = torch.cat([all_tex, empty],  dim=-1)
+            return (rast[..., -1:] > 0).float(), all_tex
+            
+        elif disable_occl:
+            all_tex = torch.cat([empty, all_tex],  dim=-1)
+            return (rast[..., -1:] > 0).float(), all_tex
+        else:
+            return (rast[..., -1:] > 0).float(),   all_tex
+        
 
 
 

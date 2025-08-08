@@ -201,16 +201,33 @@ def save_mtl(fn, material):
 
 
 @torch.no_grad()
-def save_textures(folder_path, material):
+def save_textures(folder_path, material, disable_occlusion=False, disable_metallic=False):
     os.makedirs(folder_path, exist_ok=True)
     if 'ks' in material.keys():
         ks_base = material['ks'].getMips()[0]
         ks_channels = ks_base.shape[-1]
+        empty = torch.zeros_like(ks_base[..., :1])
         
         if ks_channels==2:
-            ks2 = ks_base
-            occlusion = torch.zeros_like(ks2[..., :1])
-            ks_base = torch.cat([occlusion, ks2], dim=-1)
+            if disable_metallic:
+                # 2-channel texture contains [occlusion, roughness], add zero metallic
+                ks_base = torch.cat([ks_base, empty], dim=-1)
+            elif disable_occlusion:
+                # 2-channel texture contains [roughness, metallic], add zero occlusion at start
+                ks_base = torch.cat([empty, ks_base], dim=-1)
+            else:
+                # Legacy fallback - assume it needs occlusion prepended
+                ks2 = ks_base
+                ks_base = torch.cat([empty, ks2], dim=-1)
+
+        elif ks_channels==1:
+            if disable_occlusion and disable_metallic:
+                # 1-channel texture contains [roughness], add zero occlusion and metallic
+                ks_base = torch.cat([empty, ks_base, empty], dim=-1)
+            else:
+                # Legacy fallback
+                ks_base = torch.cat([empty, ks_base, empty], dim=-1)
+                
 
         elif ks_channels==3:
             pass

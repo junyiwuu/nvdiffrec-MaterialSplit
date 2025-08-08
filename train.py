@@ -125,6 +125,7 @@ def prepare_batch(target, bg_type='black'):
 
 @torch.no_grad()
 def xatlas_uvmap(glctx, geometry, mat, FLAGS):
+
     eval_mesh = geometry.getMesh(mat)
     
     # Create uvs with xatlas
@@ -145,13 +146,21 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
 
     # sample the texture, not write out, already have uv
     if FLAGS.separate_ks:
+        print(f"DEBUG: using xatlas_uvmap")
         mask, kd, normal = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['kd_normal'])
-        _, ks = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['ks'])
+
+        _, ks = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['ks'],  disable_occl=FLAGS.disable_occlusion, disable_metal=FLAGS.disable_metallic)
+        
         # logging.info(f"ks shape : {ks.shape}")
         # ks: [1, 1024, 1024, 3]
-        if FLAGS.disable_occlusion:
-            ks = ks[... , 1:]  # remove occlusion, not allow it transfer into nn.Module
-            # ks = ks2.contiguous() # avoid C_contiguous issue
+
+        # if FLAGS.disable_metallic and FLAGS.disable_occlusion:
+        #     ks = ks[... , 1:-1] 
+        # elif FLAGS.disable_metallic:
+        #     ks = ks[... , :-1]      
+        # elif FLAGS.disable_occlusion:
+        #     ks = ks[... , 1:]  # remove occlusion, not allow it transfer into nn.Module
+        #     # notes: ks = ks2.contiguous() # avoid C_contiguous issue
 
 
         
@@ -181,6 +190,10 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
 ###############################################################################
 # mat = initial_guess_material(geometry, True, FLAGS)
 def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
+    print(f"DEBUG: initial_guess_material called with mlp={mlp}, init_mat is None: {init_mat is None}")
+    if init_mat is not None:
+        print(f"DEBUG: init_mat type: {type(init_mat)}, keys: {list(init_mat.keys()) if hasattr(init_mat, 'keys') else 'no keys method'}")
+    
     kd_min, kd_max = torch.tensor(FLAGS.kd_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.kd_max, dtype=torch.float32, device='cuda')
     ks_min, ks_max = torch.tensor(FLAGS.ks_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.ks_max, dtype=torch.float32, device='cuda')
     nrm_min, nrm_max = torch.tensor(FLAGS.nrm_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.nrm_max, dtype=torch.float32, device='cuda')
@@ -192,12 +205,24 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
             mlp_min = torch.cat((kd_min[0:3], nrm_min), dim=0)
             mlp_max = torch.cat((kd_max[0:3], nrm_max), dim=0)
 
-            mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), channels=6, min_max=[mlp_min, mlp_max])
+            mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16, channels=6, min_max=[mlp_min, mlp_max])
 
-            if FLAGS.disable_occlusion:
+            if FLAGS.disable_occlusion and FLAGS.disable_metallic:
+                ks_min = ks_min[1:-1]
+                ks_max = ks_max[1:-1]
+                mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=8 ,channels=1, min_max=[ks_min, ks_max])
+
+            elif FLAGS.disable_occlusion:
                 ks_min = ks_min[1:]
                 ks_max = ks_max[1:]
                 mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16 ,channels=2, min_max=[ks_min, ks_max])
+
+            elif FLAGS.disable_metallic:
+                ks_min = ks_min[:-1]
+                ks_max = ks_max[:-1]
+                mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16 ,channels=2, min_max=[ks_min, ks_max])
+
+
             else: # if not disable occlusion channel in ks
                 mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16, channels=3, min_max=[ks_min, ks_max])
             
@@ -216,6 +241,10 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
     # 要么使用普通贴图
     else:
         # Setup Kd (albedo) and Ks (x, roughness, metalness) textures
+        print(f"DEBUG: Texture initialization - random_textures: {FLAGS.random_textures}, init_mat is None: {init_mat is None}")
+        if init_mat is not None:
+            print(f"DEBUG: init_mat keys: {list(init_mat.keys())}")
+        
         # 如果没有初始贴图
         if FLAGS.random_textures or init_mat is None:
             num_channels = 4 if FLAGS.layers > 1 else 3
@@ -231,8 +260,36 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
 
         # 如果有初始贴图    
         else:
+            print(f"DEBUG: Loading initial textures in pass 2")
+            print(f"DEBUG: init_mat ks shape: {init_mat['ks'].shape if hasattr(init_mat['ks'], 'shape') else 'no shape attr'}")
+            print(f"DEBUG: disable_occlusion: {FLAGS.disable_occlusion}, disable_metallic: {FLAGS.disable_metallic}")
+            
             kd_map_opt = texture.create_trainable(init_mat['kd'], FLAGS.texture_res, not FLAGS.custom_mip, [kd_min, kd_max])
-            ks_map_opt = texture.create_trainable(init_mat['ks'], FLAGS.texture_res, not FLAGS.custom_mip, [ks_min, ks_max])
+            
+            # Extract only the needed channels from ks texture based on disable flags
+            ks_data = init_mat['ks']
+            if FLAGS.disable_occlusion and FLAGS.disable_metallic:
+                # Only use roughness channel (index 1)
+                ks_data = ks_data[..., 1:2]  # Extract only roughness
+                ks_min_adjusted = ks_min[1:2]
+                ks_max_adjusted = ks_max[1:2] 
+            elif FLAGS.disable_occlusion:
+                # Use roughness and metallic (indices 1,2)
+                ks_data = ks_data[..., 1:3]
+                ks_min_adjusted = ks_min[1:3]
+                ks_max_adjusted = ks_max[1:3]
+            elif FLAGS.disable_metallic:
+                # Use occlusion and roughness (indices 0,1)
+                ks_data = ks_data[..., 0:2]
+                ks_min_adjusted = ks_min[0:2]
+                ks_max_adjusted = ks_max[0:2]
+            else:
+                # Use all channels
+                ks_data = ks_data
+                ks_min_adjusted = ks_min
+                ks_max_adjusted = ks_max
+                
+            ks_map_opt = texture.create_trainable(ks_data, FLAGS.texture_res, not FLAGS.custom_mip, [ks_min_adjusted, ks_max_adjusted])
 
         # Setup normal map
         if FLAGS.random_textures or init_mat is None or 'normal' not in init_mat:
@@ -414,12 +471,23 @@ class Trainer(torch.nn.Module):
         #     self.params = list(self.material['kd_normal'].parameters())
         #     self.ks_params = list(self.material['ks'].parameters()) # separate ks network
 
+        # Initialize params and ks_params first
+        self.params = []
+        self.ks_params = []
+
+        print(f"DEBUG: Material type: {type(self.material)}")
+        print(f"DEBUG: Material keys: {list(self.material.keys()) if hasattr(self.material, 'keys') else 'no keys method'}")
+        print(f"DEBUG: Has kd_normal: {hasattr(self.material, 'kd_normal')}")
+        print(f"DEBUG: Has kd_ks_normal: {hasattr(self.material, 'kd_ks_normal')}")
+        print(f"DEBUG: Has ks: {'ks' in self.material if hasattr(self.material, 'keys') else hasattr(self.material, 'ks')}")
+
         if hasattr(self.material, "kd_normal"):
             self.params = list(self.material['kd_normal'].parameters())
             self.ks_params = list(self.material['ks'].parameters())
         elif hasattr(self.material, "kd_ks_normal"):
             self.params = list(self.material["kd_ks_normal"].parameters())
-        elif hasattr(self.material, "ks") and hasattr(self.material, "kd") and hasattr(self.material, "normal"): # or just use the textures. all above are MLP
+        elif (hasattr(self.material, "ks") and hasattr(self.material, "kd") and hasattr(self.material, "normal")) or \
+             ('ks' in self.material and 'kd' in self.material and 'normal' in self.material): # or just use the textures. all above are MLP
             logging.debug(f"loading textures kd, ks , normal")
             self.params = list(self.material['kd'].parameters())
             self.params += list(self.material['normal'].parameters())
@@ -501,16 +569,13 @@ def optimize_mesh(
 
 
 
-    trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, loss_dict, FLAGS)
+    trainer = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, loss_dict, FLAGS)
 
     # for isosurface
     if FLAGS.isosurface == 'flexicubes':
         betas = (0.7, 0.9)
     else:
         betas = (0.9, 0.999)
-
-
-    trainer = trainer_noddp
 
 
     def lr_warmup_schedule(iter, fraction):
@@ -553,33 +618,33 @@ def optimize_mesh(
     # during the first pass, ks use stage2 schedule -> when iter > half, it starting optimization
     # other parts are opposite                    
         if optimize_geometry:
-            optimizer_mesh = torch.optim.Adam(trainer_noddp.geo_params, lr=learning_rate_pos, betas=betas)
+            optimizer_mesh = torch.optim.Adam(trainer.geo_params, lr=learning_rate_pos, betas=betas)
             scheduler_mesh = torch.optim.lr_scheduler.LambdaLR(optimizer_mesh, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
 
-        optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
+        optimizer = torch.optim.Adam(trainer.params, lr=learning_rate_mat)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_stage1_schedule(x)) 
 
-        optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
+        optimizer_ks = torch.optim.Adam(trainer.ks_params, lr=learning_rate_mat)
         scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: lr_stage2_schedule(x))
 
 
 
     else: # in pass 2
         if optimize_geometry:
-            optimizer_mesh = torch.optim.Adam(trainer_noddp.geo_params, lr=learning_rate_pos, betas=betas)
+            optimizer_mesh = torch.optim.Adam(trainer.geo_params, lr=learning_rate_pos, betas=betas)
             scheduler_mesh = torch.optim.lr_scheduler.LambdaLR(optimizer_mesh, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
 
-        optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
+        optimizer = torch.optim.Adam(trainer.params, lr=learning_rate_mat)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
 
         warmup_ks_iter = int(0.2*FLAGS.iter)
         hold_ks_iters = int(0.2*FLAGS.iter)
-        optimizer_ks = torch.optim.Adam(trainer_noddp.ks_params, lr=learning_rate_mat)
+        optimizer_ks = torch.optim.Adam(trainer.ks_params, lr=learning_rate_mat)
         scheduler_ks = torch.optim.lr_scheduler.LambdaLR(optimizer_ks, lr_lambda=lambda x: ks_lr_lambda(x))
 
         
 
-    # optimizer = torch.optim.Adam(trainer_noddp.params, lr=learning_rate_mat)
+    # optimizer = torch.optim.Adam(trainer.params, lr=learning_rate_mat)
     # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_warmup_schedule(x, 0.9)) 
 
     
@@ -820,6 +885,7 @@ if __name__ == "__main__":
     
     # if disable ao channel, for strong light envrionment, or for try
     parser.add_argument('--disable_occlusion', type=bool, default=False)
+    parser.add_argument('--disable_metallic', type=bool, default=False)
 
     parser.add_argument('-o', '--out-dir', type=str, default="output")
     parser.add_argument('-rm', '--ref_mesh', type=str)
@@ -1016,6 +1082,10 @@ if __name__ == "__main__":
 
         # write out mesh and texture
         base_mesh = xatlas_uvmap(glctx, geometry, mat, FLAGS)
+        print(f"DEBUG: base_mesh.material keys: {list(base_mesh.material.keys())}")
+        if 'ks' in base_mesh.material:
+            print(f"DEBUG: base_mesh ks type: {type(base_mesh.material['ks'])}")
+            print(f"DEBUG: base_mesh ks data shape: {base_mesh.material['ks'].data.shape if hasattr(base_mesh.material['ks'], 'data') else 'no data attr'}")
 
         # Free temporaries / cached memory 
         torch.cuda.empty_cache()
@@ -1033,7 +1103,7 @@ if __name__ == "__main__":
 
         #  --- save dmtet mesh, env---
         os.makedirs(os.path.join(out_dir_job, "dmtet_mesh"), exist_ok=True)
-        obj.write_obj(os.path.join(out_dir_job, "dmtet_mesh/"), base_mesh) # write obj and textures
+        obj.write_obj(os.path.join(out_dir_job, "dmtet_mesh/"), base_mesh, save_material=True, disable_occlusion=FLAGS.disable_occlusion, disable_metallic=FLAGS.disable_metallic) # write obj and textures
         light.save_env_map(os.path.join(out_dir_job, "dmtet_mesh/probe.hdr"), lgt)
 
          
@@ -1044,7 +1114,55 @@ if __name__ == "__main__":
         geometry = DLMesh(base_mesh, FLAGS)   # register vertex as nn.parameters
        
         logging.info("pass2 : Starting train with fixed topology (DLMesh)")
-        geometry, mat = optimize_mesh(glctx, geometry, base_mesh.material, lgt, dataset_train, dataset_validate, FLAGS, 
+        
+        # Extract needed channels for pass 2 based on disable flags
+        if FLAGS.disable_occlusion or FLAGS.disable_metallic:
+            # Get the 3-channel ks texture: [occlusion, roughness, metallic] 
+            ks_texture = base_mesh.material['ks']
+            ks_data = ks_texture.data  # Shape: [1, 1024, 1024, 3]
+            print(f"DEBUG: Original ks_data shape: {ks_data.shape}, disable_occlusion: {FLAGS.disable_occlusion}, disable_metallic: {FLAGS.disable_metallic}")
+            
+            from render import texture
+            
+            if FLAGS.disable_occlusion and FLAGS.disable_metallic:
+                # Only roughness: [roughness]
+                extracted_data = ks_data[..., 1:2]
+                ks_min_extracted = torch.tensor([FLAGS.ks_min[1]], dtype=torch.float32, device='cuda')
+                ks_max_extracted = torch.tensor([FLAGS.ks_max[1]], dtype=torch.float32, device='cuda')
+                
+            elif FLAGS.disable_occlusion:
+                # Roughness + metallic: [roughness, metallic]  
+                extracted_data = ks_data[..., 1:3]
+                ks_min_extracted = torch.tensor(FLAGS.ks_min[1:3], dtype=torch.float32, device='cuda')
+                ks_max_extracted = torch.tensor(FLAGS.ks_max[1:3], dtype=torch.float32, device='cuda')
+                
+            elif FLAGS.disable_metallic:
+                # Occlusion + roughness: [occlusion, roughness]  
+                extracted_data = ks_data[..., 0:2]
+                ks_min_extracted = torch.tensor(FLAGS.ks_min[0:2], dtype=torch.float32, device='cuda')
+                ks_max_extracted = torch.tensor(FLAGS.ks_max[0:2], dtype=torch.float32, device='cuda')
+                print(f"DEBUG: disable_metallic extraction - data shape: {extracted_data.shape}, min: {ks_min_extracted}, max: {ks_max_extracted}")
+            
+            # Create new texture with extracted channels
+            new_ks_texture = texture.create_trainable(extracted_data, FLAGS.texture_res, not FLAGS.custom_mip, [ks_min_extracted, ks_max_extracted])
+            print(f"DEBUG: Created new ks texture with shape: {new_ks_texture.data.shape}")
+            print(f"DEBUG: Original material keys: {list(base_mesh.material.keys())}")
+            
+            # Replace ks in material
+            pass2_material = dict(base_mesh.material)
+            pass2_material['ks'] = new_ks_texture
+            
+            print(f"DEBUG: Pass2 material ks texture shape: {pass2_material['ks'].data.shape}")
+            print(f"DEBUG: Pass2 material has kd_normal: {'kd_normal' in pass2_material}")
+            print(f"DEBUG: Pass2 material has kd_ks_normal: {'kd_ks_normal' in pass2_material}")
+            
+            print(f"DEBUG: Pass2 extracted ks channels - from {ks_data.shape} to {extracted_data.shape}")
+        else:
+            # All channels: [occlusion, roughness, metallic] - use original material
+            pass2_material = base_mesh.material
+            print(f"DEBUG: Pass2 using all ks channels - no extraction needed")
+        
+        geometry, mat = optimize_mesh(glctx, geometry, pass2_material, lgt, dataset_train, dataset_validate, FLAGS, 
                     pass_idx=1, pass_name="mesh_pass", warmup_iter=100, optimize_light=FLAGS.learn_light and not FLAGS.lock_light, 
                     optimize_geometry=not FLAGS.lock_pos)
         
@@ -1085,7 +1203,7 @@ if __name__ == "__main__":
     # ==============================================================================================
     final_mesh = geometry.getMesh(mat)
     os.makedirs(os.path.join(out_dir_job, "mesh"), exist_ok=True)
-    obj.write_obj(os.path.join(out_dir_job, "mesh/"), final_mesh)
+    obj.write_obj(os.path.join(out_dir_job, "mesh/"), final_mesh, save_material=True, disable_occlusion=FLAGS.disable_occlusion, disable_metallic=FLAGS.disable_metallic)
     light.save_env_map(os.path.join(out_dir_job, "mesh/probe.hdr"), lgt)
 
 #----------------------------------------------------------------------------

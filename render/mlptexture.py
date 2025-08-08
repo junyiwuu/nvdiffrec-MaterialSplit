@@ -100,7 +100,7 @@ class MLPTexture3D(torch.nn.Module):
     # Sample texture at a given location
     def sample(self, texc): # texture coordinate on the geometry (the sample point on geometry 3d position)
         # 将输入的三维点texc根据AABB映射到[0,1]的区间
-        _texc = (texc.view(-1, 3) - self.AABB[0][None, ...]) / (self.AABB[1][None, ...] - self.AABB[0][None, ...])
+        _texc = (texc.view(-1, 3) - self.AABB[0][None, ...])   /   (self.AABB[1][None, ...] - self.AABB[0][None, ...])
         _texc = torch.clamp(_texc, min=0, max=1)
         
         # 用hashgrid将其编码

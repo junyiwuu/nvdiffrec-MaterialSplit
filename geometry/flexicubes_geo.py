@@ -137,7 +137,8 @@ class FlexiCubesGeometry(torch.nn.Module):
     def render(self, glctx, target, lgt, opt_material, bsdf=None, training = False):
         opt_mesh = self.getMesh(opt_material, training)
         return render.render_mesh(glctx, opt_mesh, target['mvp'], target['campos'], lgt, target['resolution'], spp=target['spp'], 
-                                        msaa=True, background=target['background'], bsdf=bsdf,disable_occl=self.FLAGS.disable_occlusion)
+                                        msaa=True, background=target['background'], bsdf=bsdf,
+                                        disable_occl=self.FLAGS.disable_occlusion, disable_metal=self.FLAGS.disable_metallic)
 
 
     def tick(self, glctx, target, lgt, opt_material, loss_dict, iteration):
