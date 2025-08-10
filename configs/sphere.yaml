@@ -3,7 +3,7 @@ base_config:
 
 
 ref_mesh: "data/sphere/sphere.obj"
-ref_textures: "data/sphere/textures_rm"
+ref_textures: "data/sphere/textures_r"
 # base_mesh: "data/sphere/sphere.obj"
 
 random_textures: true
@@ -30,5 +30,8 @@ ks_loss_1: "relmse"
 ks_loss_2: "mse"
 
 
-disable_occlusion: true
+disable_occlusion: false
+disable_metallic: false
 
+isosurface : "flexicubes"
+dmtet_grid : 48

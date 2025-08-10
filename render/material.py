@@ -138,7 +138,10 @@ def load_textures(filename, textures_path):
             # logging.debug(f"load kd texture2d")
             mat['kd'] = texture.srgb_to_rgb(mat['kd'])  # use linear data to render, write out with srgb
 
-    
+        if 'normal' in lowername:
+            mat['normal'] = texture.load_texture2D(os.path.join(fullpath), lambda_fn=lambda x: x * 2 - 1, channels=3)
+
+
         if "roughness" in lowername:
             rough_tex = texture.load_texture2D(fullpath, channels=1)
             # texture.save_texture2D(rough_tex)

@@ -18,10 +18,14 @@ envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 background: "white"
 validate : True
 learn_light : false
-# out_dir: "output"
+
+
+out_dir: "output"
+
 separate_ks: True
 add_datetime_prefix: true
 loss: "relmse"
+
 
 kd_loss_1: "logl1"
 kd_loss_2 : "smape"
@@ -29,5 +33,8 @@ ks_loss_1: "relmse"
 ks_loss_2: "mse"
 
 
-disable_occlusion: true
+disable_occlusion: false
+disable_metallic: false
 
+isosurface : "flexicubes"
+# dmtet_grid : 48
