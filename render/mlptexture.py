@@ -76,14 +76,14 @@ class MLPTexture3D(torch.nn.Module):
         enc_cfg =  {
             "otype": "HashGrid",
             "n_levels": num_levels,
-            "n_features_per_level": 2,
+            "n_features_per_level": 2,   # each grid vertex store n-dimesnionsal feature vector
             "log2_hashmap_size": 19,
             "base_resolution": base_grid_resolution,
             "per_level_scale" : per_level_scale
 	    }
 
         gradient_scaling = 128.0
-        self.encoder = tcnn.Encoding(3, enc_cfg)
+        self.encoder = tcnn.Encoding(3, enc_cfg)  # three dimensions input
         self.encoder.register_full_backward_hook(lambda module, grad_i, grad_o: (grad_i[0] / gradient_scaling, ))
         # 这个钩子是在所有参数都完成梯度计算之后才被调用的。而不是每层的activation之后的
 

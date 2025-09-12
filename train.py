@@ -151,17 +151,6 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
 
         _, ks = render.render_uv(glctx, new_mesh, FLAGS.texture_res, eval_mesh.material['ks'],  disable_occl=FLAGS.disable_occlusion, disable_metal=FLAGS.disable_metallic)
         
-        # logging.info(f"ks shape : {ks.shape}")
-        # ks: [1, 1024, 1024, 3]
-
-        # if FLAGS.disable_metallic and FLAGS.disable_occlusion:
-        #     ks = ks[... , 1:-1] 
-        # elif FLAGS.disable_metallic:
-        #     ks = ks[... , :-1]      
-        # elif FLAGS.disable_occlusion:
-        #     ks = ks[... , 1:]  # remove occlusion, not allow it transfer into nn.Module
-        #     # notes: ks = ks2.contiguous() # avoid C_contiguous issue
-
 
         
     else:
@@ -205,7 +194,7 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
             mlp_min = torch.cat((kd_min[0:3], nrm_min), dim=0)
             mlp_max = torch.cat((kd_max[0:3], nrm_max), dim=0)
 
-            mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16, channels=6, min_max=[mlp_min, mlp_max])
+            mlp_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=32, hidden=2 ,channels=6, min_max=[mlp_min, mlp_max])
 
             if FLAGS.disable_occlusion and FLAGS.disable_metallic:
                 ks_min = ks_min[1:-1]
@@ -215,7 +204,7 @@ def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
             elif FLAGS.disable_occlusion:
                 ks_min = ks_min[1:]
                 ks_max = ks_max[1:]
-                mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=16 ,channels=2, min_max=[ks_min, ks_max])
+                mlp_ks_map_opt = mlptexture.MLPTexture3D(geometry.getAABB(), internal_dims=32, hidden=2 ,channels=2, min_max=[ks_min, ks_max])
 
             elif FLAGS.disable_metallic:
                 ks_min = ks_min[:-1]
@@ -474,12 +463,6 @@ class Trainer(torch.nn.Module):
         # Initialize params and ks_params first
         self.params = []
         self.ks_params = []
-
-        print(f"DEBUG: Material type: {type(self.material)}")
-        print(f"DEBUG: Material keys: {list(self.material.keys()) if hasattr(self.material, 'keys') else 'no keys method'}")
-        print(f"DEBUG: Has kd_normal: {hasattr(self.material, 'kd_normal')}")
-        print(f"DEBUG: Has kd_ks_normal: {hasattr(self.material, 'kd_ks_normal')}")
-        print(f"DEBUG: Has ks: {'ks' in self.material if hasattr(self.material, 'keys') else hasattr(self.material, 'ks')}")
 
         if hasattr(self.material, "kd_normal"):
             self.params = list(self.material['kd_normal'].parameters())
@@ -877,10 +860,10 @@ if __name__ == "__main__":
     parser.add_argument('-bg', '--background', default='checker', choices=['black', 'white', 'checker', 'reference'])
     parser.add_argument('--loss', default='logl1', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse'])
 
-    parser.add_argument('--kd_loss_1', default='relmse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
-    parser.add_argument('--kd_loss_2', default='msssim', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
-    parser.add_argument('--ks_loss_1', default='mse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
-    parser.add_argument('--ks_loss_2', default=None, choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
+    parser.add_argument('--kd_loss_1', default='logl1', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
+    parser.add_argument('--kd_loss_2', default='smape', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
+    parser.add_argument('--ks_loss_1', default='relmse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
+    parser.add_argument('--ks_loss_2', default='mse', choices=['logl1', 'logl2', 'mse', 'smape', 'relmse', 'msssim'])
     
     
     # if disable ao channel, for strong light envrionment, or for try

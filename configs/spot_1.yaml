@@ -37,7 +37,7 @@ ks_loss_2: "mse"
 
 
 disable_occlusion: true
-disable_metallic: true
+disable_metallic: false
 
-isosurface : "flexicubes"
-dmtet_grid : 48
+# isosurface : "flexicubes"
+# dmtet_grid : 48

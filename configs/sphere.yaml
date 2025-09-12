@@ -3,7 +3,7 @@ base_config:
 
 
 ref_mesh: "data/sphere/sphere.obj"
-ref_textures: "data/sphere/textures_r"
+ref_textures: "data/sphere/textures_rm"
 # base_mesh: "data/sphere/sphere.obj"
 
 random_textures: true
@@ -18,7 +18,7 @@ ks_min : [0, 0.001, 0.0]
 envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 background: "white"
 validate : True
-learn_light : false
+learn_light : true
 # out_dir: "output"
 separate_ks: True
 add_datetime_prefix: true
@@ -30,7 +30,7 @@ ks_loss_1: "relmse"
 ks_loss_2: "mse"
 
 
-disable_occlusion: false
+disable_occlusion: true
 disable_metallic: false
 
 isosurface : "flexicubes"

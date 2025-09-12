@@ -159,7 +159,7 @@ def load_textures(filename, textures_path):
         mat['kd'] = texture.Texture2D(torch.tensor([0.5, 0.5, 0.5], device='cuda'))
 
     if rough is None:
-        rough = torch.full((1, 1, 1), 0.01, device='cuda')
+        rough = torch.full((1, 1, 1), 0.001, device='cuda')
 
     # for occlusion
     occlusion = torch.zeros_like(rough)
