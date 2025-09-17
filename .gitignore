@@ -1,5 +1,6 @@
 data/*
 !data/sphere/
+!data/bob_1/
 output/
 output*/
 **/__pycache__/

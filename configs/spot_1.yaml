@@ -1,7 +1,6 @@
 base_config:
 - configs/logging.yaml
 
-
 ref_mesh: "data/spot_1/spot.obj"
 ref_textures: "data/spot_1/textures"
 
@@ -16,9 +15,9 @@ ks_min : [0, 0.001, 0.0]
 # ks_min : [0.001, 0.0]
 envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 background: "white"
+loss: "relmse"
 validate : True
 
-out_dir: "output_test"
 separate_ks: True
 add_datetime_prefix: true
 
@@ -28,16 +27,10 @@ add_datetime_prefix: true
 learn_light : false
 
 
-loss: "relmse"
-
 kd_loss_1: "logl1"
 kd_loss_2 : "smape"
 ks_loss_1: "relmse"
 ks_loss_2: "mse"
 
-
 disable_occlusion: true
 disable_metallic: false
-
-# isosurface : "flexicubes"
-# dmtet_grid : 48

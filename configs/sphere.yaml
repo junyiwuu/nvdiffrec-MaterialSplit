@@ -4,7 +4,6 @@ base_config:
 
 ref_mesh: "data/sphere/sphere.obj"
 ref_textures: "data/sphere/textures_rm"
-# base_mesh: "data/sphere/sphere.obj"
 
 random_textures: true
 iter: 1000
@@ -19,7 +18,7 @@ envmap: "data/irrmaps/aerodynamics_workshop_2k.hdr"
 background: "white"
 validate : True
 learn_light : true
-# out_dir: "output"
+
 separate_ks: True
 add_datetime_prefix: true
 loss: "relmse"
