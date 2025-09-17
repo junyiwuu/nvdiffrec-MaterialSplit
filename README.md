@@ -8,7 +8,7 @@ All modifications in this repository are provided under the same license terms.
 
 Please follow the same instruction to install the same environment as [Nvdiffrec](https://github.com/NVlabs/nvdiffrec).
 
-**For RTX5090 user:**
+**For RTX50 series user:**
 1. Install Python3.12 in your environment
 ```bash
 conda create -n dmodel python=3.12
